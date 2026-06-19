@@ -155,6 +155,7 @@ async def main() -> None:
     finally:
         updates_task.cancel()
         lag_task.cancel()
+        await asyncio.gather(updates_task, lag_task, return_exceptions=True)
         await consumer.stop()
         await producer.stop()
 
