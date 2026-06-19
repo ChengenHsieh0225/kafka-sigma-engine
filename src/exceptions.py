@@ -11,3 +11,7 @@ class LogGeneratorError(SigmaEngineError):
 
 class RuleEngineError(SigmaEngineError):
     """Raised when rule loading or evaluation fails."""
+
+
+class AlertStorageError(SigmaEngineError):
+    """Raised when alert storage or Elasticsearch operations fail."""
