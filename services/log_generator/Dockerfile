@@ -9,4 +9,4 @@ COPY src/ src/
 
 ENV PYTHONPATH=/app
 
-CMD ["python", "-m", "src.log_generator.main"]
+CMD ["python", "-m", "src.log_generator"]

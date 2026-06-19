@@ -178,8 +178,7 @@ services:
       dockerfile: services/log_generator/Dockerfile
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
-      EPS: "1000"
-      HOSTS: "host-01,host-02,host-03,host-04"
+      LOG_GENERATOR_EPS: "1000"
     depends_on:
       kafka-init:
         condition: service_completed_successfully
