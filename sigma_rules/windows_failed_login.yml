@@ -1,0 +1,11 @@
+id: win-failed-login-001
+title: Windows Failed Login Attempt
+level: medium
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    log_type: windows_event
+    event_id: '4625'
+  condition: selection

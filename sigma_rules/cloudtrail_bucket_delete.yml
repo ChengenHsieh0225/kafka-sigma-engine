@@ -1,0 +1,11 @@
+id: aws-s3-delete-001
+title: AWS S3 Bucket Deletion
+level: high
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    log_type: cloudtrail
+    action|startswith: 'DeleteBucket'
+  condition: selection
