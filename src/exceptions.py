@@ -7,3 +7,7 @@ class SigmaEngineError(Exception):
 
 class LogGeneratorError(SigmaEngineError):
     """Raised when raw log generation fails."""
+
+
+class RuleEngineError(SigmaEngineError):
+    """Raised when rule loading or evaluation fails."""
