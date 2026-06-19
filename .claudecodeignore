@@ -1,0 +1,19 @@
+# 原本的基礎設定
+.git/
+.ralph/
+node_modules/
+build/
+target/
+logs/
+*.log
+
+# 💡 新增：Python 執行與測試快取（最會產生零碎小檔案）
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# 💡 新增：Grafana 大型配置（動輒幾千行，極吃 Token）
+grafana/dashboards/*.json
