@@ -6,6 +6,7 @@ Tests observable behavior through public interfaces:
 - needs_time_flush() → time-based flush detection
 """
 
+import asyncio
 from typing import Any
 
 from src.alert_storage.service import AlertStorageService
@@ -172,3 +173,26 @@ async def test_size_flush_also_resets_time_threshold() -> None:
     await service.process(_make_alert("a1"))
     t = 7.0
     assert not service.needs_time_flush()
+
+
+# ---------------------------------------------------------------------------
+# flush() — concurrency safety
+# ---------------------------------------------------------------------------
+
+
+async def test_concurrent_flush_indexes_documents_exactly_once() -> None:
+    """Two concurrent flush() calls must not double-index the same alerts."""
+    bulk_index_call_count = 0
+
+    class YieldingIndexer:
+        async def bulk_index(self, index: str, docs: list[dict[str, Any]]) -> None:
+            nonlocal bulk_index_call_count
+            bulk_index_call_count += 1
+            await asyncio.sleep(0)  # yield so second flush can run concurrently
+
+    service = AlertStorageService(YieldingIndexer(), batch_size=100)
+    await service.process(_make_alert("a1"))
+
+    await asyncio.gather(service.flush(), service.flush())
+
+    assert bulk_index_call_count == 1

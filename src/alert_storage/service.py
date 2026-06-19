@@ -60,9 +60,9 @@ class AlertStorageService:
         if not self._buffer:
             return
         docs = [alert.to_dict() for alert in self._buffer]
-        await self._indexer.bulk_index(self._index, docs)
-        self._buffer.clear()
+        self._buffer = []  # snapshot taken; clear before await to prevent concurrent re-entry
         self._last_flush = self._clock()
+        await self._indexer.bulk_index(self._index, docs)
 
     def needs_time_flush(self) -> bool:
         """Return True if flush_interval has elapsed since the last flush and the buffer is non-empty."""

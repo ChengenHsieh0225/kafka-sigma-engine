@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 from typing import Any
 
@@ -9,7 +10,10 @@ from aiokafka import AIOKafkaConsumer
 from elasticsearch import AsyncElasticsearch
 
 from src.alert_storage.service import AlertStorageService
+from src.exceptions import AlertStorageError
 from src.models import Alert
+
+logger = logging.getLogger(__name__)
 
 
 class _ESIndexer:
@@ -24,13 +28,16 @@ class _ESIndexer:
         for doc in docs:
             ops.append({"index": {"_index": index}})
             ops.append(doc)
-        await self._client.bulk(operations=ops)
+        response = await self._client.bulk(operations=ops)
+        if response.get("errors"):
+            raise AlertStorageError(f"Bulk indexing had partial failures: {response}")
 
 
 async def _ensure_index(client: AsyncElasticsearch, index: str) -> None:
-    """Create the Elasticsearch index with explicit keyword mappings if it does not exist."""
-    if await client.indices.exists(index=index):
-        return
+    """Create the Elasticsearch index with explicit keyword mappings if it does not exist.
+
+    Uses ignore=400 to handle the TOCTOU race when multiple instances start concurrently.
+    """
     await client.indices.create(
         index=index,
         mappings={
@@ -44,6 +51,7 @@ async def _ensure_index(client: AsyncElasticsearch, index: str) -> None:
                 "raw_log": {"type": "object", "dynamic": True},
             }
         },
+        ignore=400,
     )
 
 
@@ -56,38 +64,51 @@ async def main() -> None:
     index = "alerts"
 
     es_client = AsyncElasticsearch(es_url)
-    await _ensure_index(es_client, index)
-
-    service = AlertStorageService(
-        indexer=_ESIndexer(es_client),
-        index=index,
-        batch_size=batch_size,
-        flush_interval=flush_interval,
-    )
-
-    consumer: AIOKafkaConsumer = AIOKafkaConsumer(
-        "alerts",
-        bootstrap_servers=bootstrap,
-        group_id="alert-storage",
-    )
-    await consumer.start()
-
-    async def _timer() -> None:
-        while True:
-            await asyncio.sleep(flush_interval)
-            if service.needs_time_flush():
-                await service.flush()
-
-    timer_task = asyncio.create_task(_timer())
     try:
-        async for msg in consumer:
-            data: dict[str, Any] = json.loads(msg.value)
-            alert = Alert(**data)
-            await service.process(alert)
+        await _ensure_index(es_client, index)
+
+        service = AlertStorageService(
+            indexer=_ESIndexer(es_client),
+            index=index,
+            batch_size=batch_size,
+            flush_interval=flush_interval,
+        )
+
+        consumer: AIOKafkaConsumer = AIOKafkaConsumer(
+            "alerts",
+            bootstrap_servers=bootstrap,
+            group_id="alert-storage",
+        )
+        await consumer.start()
+
+        async def _timer() -> None:
+            while True:
+                await asyncio.sleep(flush_interval)
+                if service.needs_time_flush():
+                    try:
+                        await service.flush()
+                    except Exception:
+                        logger.exception("Timer-triggered flush failed; will retry next interval")
+
+        timer_task = asyncio.create_task(_timer())
+        try:
+            async for msg in consumer:
+                try:
+                    data: dict[str, Any] = json.loads(msg.value)
+                    alert = Alert(**data)
+                except (json.JSONDecodeError, TypeError):
+                    logger.exception("Skipping malformed alert message: %r", msg.value)
+                    continue
+                await service.process(alert)
+        finally:
+            timer_task.cancel()
+            await asyncio.gather(timer_task, return_exceptions=True)
+            try:
+                await service.flush()
+            except Exception:
+                logger.exception("Final flush failed during shutdown")
+            await consumer.stop()
     finally:
-        timer_task.cancel()
-        await service.flush()
-        await consumer.stop()
         await es_client.close()
 
 

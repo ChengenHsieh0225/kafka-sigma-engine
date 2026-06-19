@@ -4,6 +4,7 @@ import datetime
 import uuid
 from typing import Any
 
+from src.exceptions import RuleEngineError
 from src.models import Alert, SigmaRule
 
 
@@ -82,14 +83,16 @@ class _ConditionParser:
         result = self._and_expr()
         while self._peek() == "or":
             self._consume()
-            result = result or self._and_expr()
+            rhs = self._and_expr()  # always advance _pos before combining
+            result = result or rhs
         return result
 
     def _and_expr(self) -> bool:
         result = self._not_expr()
         while self._peek() == "and":
             self._consume()
-            result = result and self._not_expr()
+            rhs = self._not_expr()  # always advance _pos before combining
+            result = result and rhs
         return result
 
     def _not_expr(self) -> bool:
@@ -104,7 +107,9 @@ class _ConditionParser:
             result = self._or_expr()
             self._consume()
             return result
-        return _match_selection(self._raw_log, self._groups.get(token, {}))
+        if token not in self._groups:
+            raise RuleEngineError(f"Unknown selection group in condition: {token!r}")
+        return _match_selection(self._raw_log, self._groups[token])
 
 
 def evaluate(raw_log: dict[str, Any], rules: list[SigmaRule]) -> list[Alert]:

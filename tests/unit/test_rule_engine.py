@@ -233,6 +233,58 @@ def test_evaluate_not_condition_suppresses_alert() -> None:
     assert evaluate({"host": "h", "log_type": "windows_event", "event_id": "4624"}, [rule]) == []
 
 
+def test_evaluate_parenthesized_or_then_and_checks_rhs() -> None:
+    """( sel1 or sel2 ) and sel3: sel3 must be evaluated even when sel1 is True."""
+    rule = SigmaRule(
+        id="r1",
+        title="R1",
+        level="high",
+        detection={
+            "sel1": {"log_type": "windows_event"},
+            "sel2": {"log_type": "cloudtrail"},
+            "sel3": {"event_id": "4625"},
+            "condition": "( sel1 or sel2 ) and sel3",
+        },
+    )
+    # sel1 matches but sel3 absent → no alert
+    assert evaluate({"host": "h", "log_type": "windows_event"}, [rule]) == []
+    # sel1 and sel3 both match → alert
+    assert len(evaluate({"host": "h", "log_type": "windows_event", "event_id": "4625"}, [rule])) == 1
+
+
+def test_evaluate_and_short_circuit_still_advances_parser() -> None:
+    """sel1 and sel2 and sel3: parser must consume all tokens even when sel1 is False."""
+    rule = SigmaRule(
+        id="r1",
+        title="R1",
+        level="medium",
+        detection={
+            "sel1": {"log_type": "windows_event"},
+            "sel2": {"event_id": "4625"},
+            "condition": "sel1 and sel2",
+        },
+    )
+    # sel1 False → full rule does not match (sel2 still parsed, no crash)
+    assert evaluate({"host": "h", "log_type": "cloudtrail", "event_id": "4625"}, [rule]) == []
+    # both match
+    assert len(evaluate({"host": "h", "log_type": "windows_event", "event_id": "4625"}, [rule])) == 1
+
+
+def test_evaluate_unknown_selection_name_raises_rule_engine_error() -> None:
+    """A typo in the condition field must raise RuleEngineError, not silently match every log."""
+    rule = SigmaRule(
+        id="r1",
+        title="R1",
+        level="medium",
+        detection={
+            "selection": {"log_type": "windows_event"},
+            "condition": "selectoin",  # deliberate typo
+        },
+    )
+    with pytest.raises(RuleEngineError):
+        evaluate({"host": "h", "log_type": "windows_event"}, [rule])
+
+
 # ---------------------------------------------------------------------------
 # load_rules()
 # ---------------------------------------------------------------------------
