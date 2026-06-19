@@ -81,16 +81,16 @@ async def main() -> None:
         )
         await consumer.start()
 
-        async def _timer() -> None:
+        async def _periodic_flush() -> None:
             while True:
                 await asyncio.sleep(flush_interval)
                 if service.needs_time_flush():
                     try:
                         await service.flush()
                     except Exception:
-                        logger.exception("Timer-triggered flush failed; will retry next interval")
+                        logger.exception("Periodic flush failed; will retry next interval")
 
-        timer_task = asyncio.create_task(_timer())
+        flush_task = asyncio.create_task(_periodic_flush())
         try:
             async for msg in consumer:
                 try:
@@ -101,8 +101,8 @@ async def main() -> None:
                     continue
                 await service.process(alert)
         finally:
-            timer_task.cancel()
-            await asyncio.gather(timer_task, return_exceptions=True)
+            flush_task.cancel()
+            await asyncio.gather(flush_task, return_exceptions=True)
             try:
                 await service.flush()
             except Exception:
