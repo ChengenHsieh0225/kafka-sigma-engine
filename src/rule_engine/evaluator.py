@@ -21,11 +21,11 @@ def _match_field(log_value: Any, rule_value: Any, modifier: str | None) -> bool:
 
     if modifier is None:
         return lv == rv
-    if modifier == "contains":
+    elif modifier == "contains":
         return rv in lv
-    if modifier == "startswith":
+    elif modifier == "startswith":
         return lv.startswith(rv)
-    if modifier == "endswith":
+    elif modifier == "endswith":
         return lv.endswith(rv)
     return False
 
@@ -102,7 +102,7 @@ class _ConditionParser:
         token = self._consume()
         if token == "(":
             result = self._or_expr()
-            self._consume()  # consume ")"
+            self._consume()
             return result
         return _match_selection(self._raw_log, self._groups.get(token, {}))
 
