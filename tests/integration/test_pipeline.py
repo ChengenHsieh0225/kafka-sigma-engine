@@ -54,6 +54,43 @@ async def _publish_rule_update(envelope: dict[str, Any]) -> None:
         await producer.stop()
 
 
+async def _poll_alert_with_log_replay(
+    rule_id: str, host: str, raw_log: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Poll ES for alert, republishing the raw log every 10s to handle slow rule propagation.
+
+    Replacing a fixed sleep avoids the race where a worker processes the log before
+    the rule-update envelope has been consumed and applied.
+    """
+    es = AsyncElasticsearch(ES_URL)
+    try:
+        for i in range(POLL_TIMEOUT_S // POLL_INTERVAL_S):
+            if i % (10 // POLL_INTERVAL_S) == 0:
+                await _publish_raw_log(raw_log)
+            await asyncio.sleep(POLL_INTERVAL_S)
+            try:
+                resp = await es.search(
+                    index=ALERT_INDEX,
+                    query={
+                        "bool": {
+                            "must": [
+                                {"term": {"rule_id": rule_id}},
+                                {"term": {"host": host}},
+                            ]
+                        }
+                    },
+                    ignore_unavailable=True,
+                )
+                hits: list[dict[str, Any]] = resp["hits"]["hits"]
+                if hits:
+                    return hits
+            except Exception:  # noqa: BLE001
+                pass
+    finally:
+        await es.close()
+    return []
+
+
 async def _poll_alert(rule_id: str, host: str) -> list[dict[str, Any]]:
     """Poll Elasticsearch until an alert matching rule_id + host appears or timeout."""
     es = AsyncElasticsearch(ES_URL)
@@ -263,18 +300,17 @@ async def test_rule_update_add_envelope_creates_alert() -> None:
     }
     await _publish_rule_update(add_envelope)
 
-    # Allow all workers to consume and apply the rule update.
-    await asyncio.sleep(5)
-
     host = f"test-host-{uuid.uuid4().hex[:8]}"
     raw_log = {
         "timestamp": "2026-01-01T00:00:00Z",
         "host": host,
         "log_type": log_marker,
     }
-    await _publish_raw_log(raw_log)
 
-    hits = await _poll_alert(rule_id, host)
+    # Replay the raw log periodically rather than sleeping a fixed duration; this
+    # avoids a race where a slow consumer-group rebalance causes the log to be
+    # processed before the rule-update envelope is applied.
+    hits = await _poll_alert_with_log_replay(rule_id, host, raw_log)
     assert hits, (
         f"No alert for dynamically-added rule '{rule_id}' on host '{host}' "
         f"appeared in Elasticsearch within {POLL_TIMEOUT_S}s"

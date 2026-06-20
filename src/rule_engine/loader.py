@@ -5,8 +5,8 @@ from typing import Any
 
 import yaml
 
-from src.exceptions import RuleEngineError
 from src.models import SigmaRule
+from src.rule_engine.service import _build_rule
 
 
 def load_rules(rules_dir: Path) -> list[SigmaRule]:
@@ -25,19 +25,5 @@ def load_rules(rules_dir: Path) -> list[SigmaRule]:
     for path in sorted(rules_dir.glob("*.yml")):
         with path.open() as fh:
             data: dict[str, Any] = yaml.safe_load(fh)
-
-        try:
-            rule = SigmaRule(
-                id=data["id"],
-                title=data["title"],
-                level=data["level"],
-                detection=data["detection"],
-            )
-        except KeyError as exc:
-            raise RuleEngineError(
-                f"Sigma rule file '{path.name}' is missing required field: {exc}"
-            ) from exc
-
-        rules.append(rule)
-
+        rules.append(_build_rule(data, source=f"Sigma rule file '{path.name}'"))
     return rules

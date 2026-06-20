@@ -1,10 +1,36 @@
 """Rule Engine service: in-memory Sigma Rule management and log evaluation."""
 
+import logging
 from typing import Any
 
 from src.exceptions import RuleEngineError
 from src.models import Alert, SigmaRule
 from src.rule_engine.evaluator import evaluate
+
+logger = logging.getLogger(__name__)
+
+
+def _build_rule(payload: dict[str, Any], *, source: str = "rule payload") -> SigmaRule:
+    """Construct a SigmaRule from a rule payload dict.
+
+    Args:
+        payload: Dict with ``id``, ``title``, ``level``, ``detection`` keys.
+        source: Human-readable origin description, used in error messages.
+
+    Raises:
+        RuleEngineError: If the payload is missing a required field.
+    """
+    try:
+        return SigmaRule(
+            id=payload["id"],
+            title=payload["title"],
+            level=payload["level"],
+            detection=payload["detection"],
+        )
+    except KeyError as exc:
+        raise RuleEngineError(
+            f"Missing required field {exc} in {source}"
+        ) from exc
 
 
 class RuleEngineService:
@@ -27,24 +53,6 @@ class RuleEngineService:
         """Number of Sigma Rules currently loaded."""
         return len(self._rules)
 
-    def _build_rule(self, payload: dict[str, Any]) -> SigmaRule:
-        """Construct a SigmaRule from a rule payload dict.
-
-        Raises:
-            RuleEngineError: If the payload is missing a required field.
-        """
-        try:
-            return SigmaRule(
-                id=payload["id"],
-                title=payload["title"],
-                level=payload["level"],
-                detection=payload["detection"],
-            )
-        except KeyError as exc:
-            raise RuleEngineError(
-                f"Rule payload is missing required field: {exc}"
-            ) from exc
-
     def hot_reload(self, payload: dict[str, Any]) -> SigmaRule:
         """Append a new Sigma Rule from a bare rule payload (add-only, PRD US 10).
 
@@ -57,7 +65,7 @@ class RuleEngineService:
         Raises:
             RuleEngineError: If the payload is missing a required field.
         """
-        rule = self._build_rule(payload)
+        rule = _build_rule(payload)
         self._rules.append(rule)
         return rule
 
@@ -65,11 +73,14 @@ class RuleEngineService:
         """Apply a typed rule lifecycle operation from the rule-updates Kafka topic.
 
         Envelope format (ADR-0011):
-            ``{"op": "add"|"update"|"delete", "rule_id": "...", "rule": {...}}``
+            ``{"op": "add", "rule": {...}}``
+            ``{"op": "update"|"delete", "rule_id": "...", "rule": {...}}``
 
-        The ``rule`` field is omitted for ``delete`` operations. Update and delete
-        use snapshot semantics: ``self._rules`` is rebound to a new list so any
-        in-flight evaluation snapshot is not affected (ADR-0011).
+        ``rule_id`` is required for ``update`` and ``delete`` but optional for ``add``
+        (the rule's own ``id`` field serves as the identifier). The ``rule`` field is
+        omitted for ``delete``. Update and delete use snapshot semantics: ``self._rules``
+        is rebound to a new list so any in-flight evaluation snapshot is not affected
+        (ADR-0011).
 
         Args:
             envelope: Decoded JSON dict from the ``rule-updates`` topic.
@@ -82,7 +93,6 @@ class RuleEngineService:
         """
         try:
             op: str = envelope["op"]
-            rule_id: str = envelope["rule_id"]
         except KeyError as exc:
             raise RuleEngineError(
                 f"Rule update envelope missing required field: {exc}"
@@ -94,11 +104,23 @@ class RuleEngineService:
                 raise RuleEngineError("Rule update envelope missing 'rule' field for op='add'")
             return self.hot_reload(rule_payload)
 
+        try:
+            rule_id: str = envelope["rule_id"]
+        except KeyError as exc:
+            raise RuleEngineError(
+                f"Rule update envelope missing required field: {exc}"
+            ) from exc
+
         if op == "update":
             rule_payload = envelope.get("rule")
             if rule_payload is None:
                 raise RuleEngineError("Rule update envelope missing 'rule' field for op='update'")
-            rule = self._build_rule(rule_payload)
+            if rule_payload.get("id") != rule_id:
+                raise RuleEngineError(
+                    f"Rule update envelope rule_id {rule_id!r} does not match "
+                    f"rule payload id {rule_payload.get('id')!r}"
+                )
+            rule = _build_rule(rule_payload)
             replaced = False
             new_rules = []
             for r in self._rules:
@@ -108,6 +130,9 @@ class RuleEngineService:
                 else:
                     new_rules.append(r)
             if not replaced:
+                logger.warning(
+                    "op='update' did not find rule_id=%r; inserting as new rule", rule_id
+                )
                 new_rules.append(rule)
             self._rules = new_rules
             return rule

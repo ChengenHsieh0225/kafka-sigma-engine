@@ -326,10 +326,29 @@ def test_apply_rule_update_missing_op_raises_rule_engine_error() -> None:
         service.apply_rule_update({"rule_id": "r1", "rule": _make_payload()})
 
 
-def test_apply_rule_update_missing_rule_id_raises_rule_engine_error() -> None:
+def test_apply_rule_update_update_missing_rule_id_raises_rule_engine_error() -> None:
     service = RuleEngineService()
     with pytest.raises(RuleEngineError):
-        service.apply_rule_update({"op": "add", "rule": _make_payload()})
+        service.apply_rule_update({"op": "update", "rule": _make_payload()})
+
+
+def test_apply_rule_update_add_without_rule_id_succeeds() -> None:
+    service = RuleEngineService()
+    result = service.apply_rule_update({"op": "add", "rule": _make_payload(rule_id="new-001")})
+    assert isinstance(result, SigmaRule)
+    assert result.id == "new-001"
+    assert service.rule_count == 1
+
+
+def test_apply_rule_update_update_id_mismatch_raises_rule_engine_error() -> None:
+    service = RuleEngineService([_make_rule(rule_id="win-001")])
+    with pytest.raises(RuleEngineError):
+        service.apply_rule_update(_make_envelope(
+            op="update",
+            rule_id="win-001",
+            rule={"id": "win-002", "title": "Mismatch", "level": "medium",
+                  "detection": {"sel": {}, "condition": "sel"}},
+        ))
 
 
 def test_apply_rule_update_unknown_op_raises_rule_engine_error() -> None:

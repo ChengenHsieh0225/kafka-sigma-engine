@@ -3,7 +3,8 @@
 Reads configuration from environment variables, loads Sigma Rules, then runs
 two concurrent asyncio tasks:
   - A ``raw-logs`` consumer that evaluates each log and publishes Alerts.
-  - A ``rule-updates`` fan-out consumer that hot-reloads new rules add-only.
+  - A ``rule-updates`` fan-out consumer that applies rule lifecycle operations
+    (add, update, delete) via the typed JSON envelope format (ADR-0011).
 
 Prometheus metrics are exposed via an HTTP server on METRICS_PORT.
 """
@@ -64,16 +65,16 @@ async def _consume_rule_updates(
     worker_id: str,
     service: RuleEngineService,
 ) -> None:
-    """Fan-out consumer: hot-reload new Sigma Rules published to ``rule-updates``.
+    """Fan-out consumer: apply rule lifecycle operations from ``rule-updates``.
 
     Each worker uses a unique consumer group ID so every process receives every
-    rule update (fan-out, not competing consumers).  Reloading is add-only per
-    PRD User Story 10: removing or replacing a rule requires a worker restart.
+    rule update (fan-out, not competing consumers). Supports add, update, and
+    delete operations via the typed JSON envelope format (ADR-0011).
 
     Args:
         bootstrap: Kafka bootstrap servers string.
         worker_id: Unique identifier for this worker process.
-        service: Active RuleEngineService; new rules are appended via hot_reload().
+        service: Active RuleEngineService; rule lifecycle changes applied via apply_rule_update().
     """
     consumer: AIOKafkaConsumer = AIOKafkaConsumer(
         "rule-updates",
@@ -86,7 +87,11 @@ async def _consume_rule_updates(
     try:
         async for msg in consumer:
             try:
-                data: dict[str, Any] = json.loads(msg.value)
+                data: Any = json.loads(msg.value)
+                if not isinstance(data, dict):
+                    raise RuleEngineError(
+                        f"Rule update envelope must be a JSON object, got {type(data).__name__}"
+                    )
                 service.apply_rule_update(data)
             except (json.JSONDecodeError, RuleEngineError):
                 logger.exception("Skipping malformed rule-update message: %r", msg.value)
