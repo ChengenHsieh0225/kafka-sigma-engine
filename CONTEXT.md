@@ -19,8 +19,12 @@ The data structure produced when a Raw Log satisfies all conditions of a Sigma R
 _Avoid_: Rule Match, Finding, Detection hit
 
 **Rule Lifecycle**:
-The progression of a Sigma Rule from creation by an Information Security Engineer through delivery to the running Rule Engine. Rules can be added to a live system without restart; update and delete are out of scope.
+The progression of a Sigma Rule from creation by an Information Security Engineer through delivery to the running Rule Engine. Rules can be added, updated, or deleted in a live system without restart, via typed JSON operation envelopes published to the `rule-updates` Kafka topic.
 _Avoid_: Rule management, rule update
+
+**Attack Sequence**:
+A series of Raw Logs from the same host that collectively represent a realistic threat actor behaviour pattern — for example, repeated failed logins followed by a successful login and privilege escalation. Produced by the Log Generator's per-host state machine; detected by time-window aggregation Sigma Rules.
+_Avoid_: Attack chain, event correlation, log sequence
 
 ### Pipeline
 
