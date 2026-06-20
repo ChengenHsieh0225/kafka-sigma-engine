@@ -1,4 +1,4 @@
 aiokafka>=0.11
-elasticsearch[async]>=8
+elasticsearch[async]>=8,<9
 prometheus-client>=0.20
 pyyaml>=6
