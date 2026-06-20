@@ -18,8 +18,12 @@ def _build_rule(payload: dict[str, Any], *, source: str = "rule payload") -> Sig
         source: Human-readable origin description, used in error messages.
 
     Raises:
-        RuleEngineError: If the payload is missing a required field.
+        RuleEngineError: If the payload is None, not a dict, or missing a required field.
     """
+    if not isinstance(payload, dict):
+        raise RuleEngineError(
+            f"{source} must be a JSON object, got {type(payload).__name__}"
+        )
     try:
         return SigmaRule(
             id=payload["id"],
@@ -115,6 +119,10 @@ class RuleEngineService:
             rule_payload = envelope.get("rule")
             if rule_payload is None:
                 raise RuleEngineError("Rule update envelope missing 'rule' field for op='update'")
+            if not isinstance(rule_payload, dict):
+                raise RuleEngineError(
+                    f"Rule update envelope 'rule' field must be a JSON object, got {type(rule_payload).__name__}"
+                )
             if rule_payload.get("id") != rule_id:
                 raise RuleEngineError(
                     f"Rule update envelope rule_id {rule_id!r} does not match "

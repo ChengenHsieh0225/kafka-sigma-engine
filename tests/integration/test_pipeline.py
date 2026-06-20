@@ -62,10 +62,11 @@ async def _poll_alert_with_log_replay(
     Replacing a fixed sleep avoids the race where a worker processes the log before
     the rule-update envelope has been consumed and applied.
     """
+    republish_every_n = max(1, 10 // POLL_INTERVAL_S)
     es = AsyncElasticsearch(ES_URL)
     try:
         for i in range(POLL_TIMEOUT_S // POLL_INTERVAL_S):
-            if i % (10 // POLL_INTERVAL_S) == 0:
+            if i % republish_every_n == 0:
                 await _publish_raw_log(raw_log)
             await asyncio.sleep(POLL_INTERVAL_S)
             try:
