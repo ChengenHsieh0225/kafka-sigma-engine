@@ -10,9 +10,9 @@ from src.rule_engine.evaluator import evaluate
 class RuleEngineService:
     """Holds the active Sigma Rule set and evaluates Raw Logs in memory.
 
-    Hot-reload is add-only (PRD US 10): new rules received via the rule-updates
-    Kafka topic are appended to the active set; existing rules are never replaced
-    or removed during a worker's lifetime.
+    Rules can be added, updated, or deleted at runtime without restart via
+    the typed JSON envelope format on the rule-updates Kafka topic (ADR-0011).
+    Legacy add-only hot_reload() is retained for backward compatibility.
 
     Args:
         rules: Initial Sigma Rules loaded at startup.  Copied internally so the
@@ -27,22 +27,14 @@ class RuleEngineService:
         """Number of Sigma Rules currently loaded."""
         return len(self._rules)
 
-    def hot_reload(self, payload: dict[str, Any]) -> SigmaRule:
-        """Append a new Sigma Rule from a decoded rule-updates Kafka message.
-
-        Add-only: existing rules are never replaced or removed (PRD US 10).
-
-        Args:
-            payload: Decoded JSON dict from the ``rule-updates`` Kafka topic.
-
-        Returns:
-            The newly appended SigmaRule.
+    def _build_rule(self, payload: dict[str, Any]) -> SigmaRule:
+        """Construct a SigmaRule from a rule payload dict.
 
         Raises:
             RuleEngineError: If the payload is missing a required field.
         """
         try:
-            rule = SigmaRule(
+            return SigmaRule(
                 id=payload["id"],
                 title=payload["title"],
                 level=payload["level"],
@@ -50,13 +42,87 @@ class RuleEngineService:
             )
         except KeyError as exc:
             raise RuleEngineError(
-                f"Hot-reloaded rule payload is missing required field: {exc}"
+                f"Rule payload is missing required field: {exc}"
             ) from exc
+
+    def hot_reload(self, payload: dict[str, Any]) -> SigmaRule:
+        """Append a new Sigma Rule from a bare rule payload (add-only, PRD US 10).
+
+        Args:
+            payload: Dict with ``id``, ``title``, ``level``, ``detection`` keys.
+
+        Returns:
+            The newly appended SigmaRule.
+
+        Raises:
+            RuleEngineError: If the payload is missing a required field.
+        """
+        rule = self._build_rule(payload)
         self._rules.append(rule)
         return rule
 
+    def apply_rule_update(self, envelope: dict[str, Any]) -> SigmaRule | None:
+        """Apply a typed rule lifecycle operation from the rule-updates Kafka topic.
+
+        Envelope format (ADR-0011):
+            ``{"op": "add"|"update"|"delete", "rule_id": "...", "rule": {...}}``
+
+        The ``rule`` field is omitted for ``delete`` operations. Update and delete
+        use snapshot semantics: ``self._rules`` is rebound to a new list so any
+        in-flight evaluation snapshot is not affected (ADR-0011).
+
+        Args:
+            envelope: Decoded JSON dict from the ``rule-updates`` topic.
+
+        Returns:
+            The new or updated SigmaRule for ``add``/``update``; ``None`` for ``delete``.
+
+        Raises:
+            RuleEngineError: If the envelope is malformed or ``op`` is unrecognised.
+        """
+        try:
+            op: str = envelope["op"]
+            rule_id: str = envelope["rule_id"]
+        except KeyError as exc:
+            raise RuleEngineError(
+                f"Rule update envelope missing required field: {exc}"
+            ) from exc
+
+        if op == "add":
+            rule_payload = envelope.get("rule")
+            if rule_payload is None:
+                raise RuleEngineError("Rule update envelope missing 'rule' field for op='add'")
+            return self.hot_reload(rule_payload)
+
+        if op == "update":
+            rule_payload = envelope.get("rule")
+            if rule_payload is None:
+                raise RuleEngineError("Rule update envelope missing 'rule' field for op='update'")
+            rule = self._build_rule(rule_payload)
+            replaced = False
+            new_rules = []
+            for r in self._rules:
+                if r.id == rule_id:
+                    new_rules.append(rule)
+                    replaced = True
+                else:
+                    new_rules.append(r)
+            if not replaced:
+                new_rules.append(rule)
+            self._rules = new_rules
+            return rule
+
+        if op == "delete":
+            self._rules = [r for r in self._rules if r.id != rule_id]
+            return None
+
+        raise RuleEngineError(f"Unrecognised rule update op: {op!r}")
+
     def evaluate_log(self, raw_log: dict[str, Any]) -> list[Alert]:
         """Evaluate a Raw Log against all loaded Sigma Rules.
+
+        Takes a snapshot of the current rule set so that a concurrent update or
+        delete (ADR-0011) takes effect on the next log, not the current one.
 
         Args:
             raw_log: The raw security event to evaluate.
@@ -64,4 +130,5 @@ class RuleEngineService:
         Returns:
             One Alert per matching Sigma Rule.
         """
-        return evaluate(raw_log, self._rules)
+        rules_snapshot = self._rules
+        return evaluate(raw_log, rules_snapshot)

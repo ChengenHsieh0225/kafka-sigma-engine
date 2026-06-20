@@ -87,7 +87,7 @@ async def _consume_rule_updates(
         async for msg in consumer:
             try:
                 data: dict[str, Any] = json.loads(msg.value)
-                service.hot_reload(data)
+                service.apply_rule_update(data)
             except (json.JSONDecodeError, RuleEngineError):
                 logger.exception("Skipping malformed rule-update message: %r", msg.value)
     finally:

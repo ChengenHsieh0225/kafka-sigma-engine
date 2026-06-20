@@ -41,6 +41,19 @@ async def _publish_raw_log(raw_log: dict[str, Any]) -> None:
         await producer.stop()
 
 
+async def _publish_rule_update(envelope: dict[str, Any]) -> None:
+    """Publish a rule lifecycle envelope to the rule-updates Kafka topic."""
+    producer = AIOKafkaProducer(bootstrap_servers=KAFKA_BOOTSTRAP)
+    await producer.start()
+    try:
+        await producer.send_and_wait(
+            "rule-updates",
+            value=json.dumps(envelope).encode(),
+        )
+    finally:
+        await producer.stop()
+
+
 async def _poll_alert(rule_id: str, host: str) -> list[dict[str, Any]]:
     """Poll Elasticsearch until an alert matching rule_id + host appears or timeout."""
     es = AsyncElasticsearch(ES_URL)
@@ -222,3 +235,51 @@ async def test_duplicate_alert_message_is_deduplicated_in_elasticsearch() -> Non
     assert count == 1, (
         f"Expected exactly 1 ES document for alert_id '{alert_id}' after deduplication, got {count}"
     )
+
+
+@pytest.mark.integration
+async def test_rule_update_add_envelope_creates_alert() -> None:
+    """Publish an 'add' rule-update envelope → matching raw log → alert in ES.
+
+    Verifies the typed JSON envelope format (ADR-0011) is handled by all
+    rule engine workers: the new rule is applied and subsequent matching
+    logs produce alerts.
+    """
+    rule_id = f"integ-rule-{uuid.uuid4().hex[:8]}"
+    log_marker = f"integ-marker-{uuid.uuid4().hex[:8]}"
+
+    add_envelope = {
+        "op": "add",
+        "rule_id": rule_id,
+        "rule": {
+            "id": rule_id,
+            "title": f"Integration Test Add Rule {rule_id}",
+            "level": "high",
+            "detection": {
+                "sel": {"log_type": log_marker},
+                "condition": "sel",
+            },
+        },
+    }
+    await _publish_rule_update(add_envelope)
+
+    # Allow all workers to consume and apply the rule update.
+    await asyncio.sleep(5)
+
+    host = f"test-host-{uuid.uuid4().hex[:8]}"
+    raw_log = {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "host": host,
+        "log_type": log_marker,
+    }
+    await _publish_raw_log(raw_log)
+
+    hits = await _poll_alert(rule_id, host)
+    assert hits, (
+        f"No alert for dynamically-added rule '{rule_id}' on host '{host}' "
+        f"appeared in Elasticsearch within {POLL_TIMEOUT_S}s"
+    )
+    doc = hits[0]["_source"]
+    assert doc["rule_id"] == rule_id
+    assert doc["severity"] == "high"
+    assert doc["host"] == host
