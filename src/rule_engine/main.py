@@ -10,6 +10,7 @@ Prometheus metrics are exposed via an HTTP server on METRICS_PORT.
 
 import asyncio
 import json
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -18,8 +19,11 @@ from typing import Any
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
+from src.exceptions import RuleEngineError
 from src.rule_engine.loader import load_rules
 from src.rule_engine.service import RuleEngineService
+
+logger = logging.getLogger(__name__)
 
 _LOGS_PROCESSED: Counter = Counter(
     "logs_processed_total",
@@ -70,9 +74,6 @@ async def _consume_rule_updates(
         bootstrap: Kafka bootstrap servers string.
         worker_id: Unique identifier for this worker process.
         service: Active RuleEngineService; new rules are appended via hot_reload().
-
-    Raises:
-        RuleEngineError: If a published rule payload is missing a required field.
     """
     consumer: AIOKafkaConsumer = AIOKafkaConsumer(
         "rule-updates",
@@ -84,8 +85,11 @@ async def _consume_rule_updates(
     await consumer.start()
     try:
         async for msg in consumer:
-            data: dict[str, Any] = json.loads(msg.value)
-            service.hot_reload(data)
+            try:
+                data: dict[str, Any] = json.loads(msg.value)
+                service.hot_reload(data)
+            except (json.JSONDecodeError, RuleEngineError):
+                logger.exception("Skipping malformed rule-update message: %r", msg.value)
     finally:
         await consumer.stop()
 
@@ -127,7 +131,11 @@ async def main() -> None:
 
     try:
         async for msg in consumer:
-            raw_log: dict[str, Any] = json.loads(msg.value)
+            try:
+                raw_log: dict[str, Any] = json.loads(msg.value)
+            except json.JSONDecodeError:
+                logger.exception("Skipping malformed raw-log message: %r", msg.value)
+                continue
 
             with _EVAL_DURATION.time():
                 alerts = service.evaluate_log(raw_log)
