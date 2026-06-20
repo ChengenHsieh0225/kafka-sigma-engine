@@ -162,3 +162,63 @@ async def test_non_matching_log_produces_no_alert() -> None:
         await es.close()
 
     assert not hits, f"Unexpected alert found for non-matching log on host '{host}': {hits}"
+
+
+async def _publish_alert_direct(alert_payload: dict[str, Any]) -> None:
+    """Publish a pre-formed Alert JSON directly to the alerts Kafka topic."""
+    producer = AIOKafkaProducer(bootstrap_servers=KAFKA_BOOTSTRAP)
+    await producer.start()
+    try:
+        await producer.send_and_wait(
+            "alerts",
+            value=json.dumps(alert_payload).encode(),
+        )
+    finally:
+        await producer.stop()
+
+
+async def _poll_es_count(alert_id: str) -> int:
+    """Return the number of ES documents matching the given alert_id."""
+    es = AsyncElasticsearch(ES_URL)
+    try:
+        resp = await es.count(
+            index=ALERT_INDEX,
+            query={"term": {"alert_id": alert_id}},
+            ignore_unavailable=True,
+        )
+        count: int = resp["count"]
+        return count
+    finally:
+        await es.close()
+
+
+@pytest.mark.integration
+async def test_duplicate_alert_message_is_deduplicated_in_elasticsearch() -> None:
+    """Publishing the same alert (same alert_id) twice must produce exactly one ES document.
+
+    Simulates Kafka at-least-once replay: the same Kafka message is consumed twice.
+    With _id=alert_id set in the bulk action, the second write is an idempotent upsert
+    and must not create a second document (ADR-0014).
+    """
+    alert_id = f"dedup-test-{uuid.uuid4().hex}"
+    alert_payload = {
+        "alert_id": alert_id,
+        "rule_id": "win-failed-login-001",
+        "rule_title": "Windows Failed Login",
+        "severity": "medium",
+        "matched_at": "2026-01-01T00:00:00+00:00",
+        "host": f"dedup-host-{uuid.uuid4().hex[:8]}",
+        "raw_log": {"event_id": "4625"},
+    }
+
+    # Publish the same alert message twice to simulate at-least-once replay.
+    await _publish_alert_direct(alert_payload)
+    await _publish_alert_direct(alert_payload)
+
+    # Wait for both messages to be consumed and flushed (flush_interval=5s + margin).
+    await asyncio.sleep(12)
+
+    count = await _poll_es_count(alert_id)
+    assert count == 1, (
+        f"Expected exactly 1 ES document for alert_id '{alert_id}' after deduplication, got {count}"
+    )

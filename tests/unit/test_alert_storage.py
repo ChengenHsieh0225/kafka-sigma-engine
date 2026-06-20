@@ -4,11 +4,14 @@ Tests observable behavior through public interfaces:
 - process(alert) → buffer accumulation and size-based flush
 - flush() → documents sent to indexer, buffer cleared
 - needs_time_flush() → time-based flush detection
+- _ESIndexer → ES bulk action metadata (system boundary)
 """
 
 import asyncio
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
+from src.alert_storage.main import _ESIndexer
 from src.alert_storage.service import AlertStorageService
 from src.models import Alert
 
@@ -196,3 +199,27 @@ async def test_concurrent_flush_indexes_documents_exactly_once() -> None:
     await asyncio.gather(service.flush(), service.flush())
 
     assert bulk_index_call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# _ESIndexer — Elasticsearch bulk action metadata (system boundary)
+# ---------------------------------------------------------------------------
+
+
+async def test_es_indexer_sets_alert_id_as_document_id() -> None:
+    """_ESIndexer must set _id=alert_id on each bulk action for idempotent upserts (ADR-0014)."""
+    mock_client = MagicMock()
+    mock_client.bulk = AsyncMock(return_value={"errors": False})
+
+    indexer = _ESIndexer(mock_client)
+    docs: list[dict[str, Any]] = [
+        {"alert_id": "uuid-abc", "rule_id": "r1", "severity": "high"},
+        {"alert_id": "uuid-xyz", "rule_id": "r2", "severity": "low"},
+    ]
+    await indexer.bulk_index("alerts", docs)
+
+    ops: list[Any] = mock_client.bulk.call_args.kwargs["operations"]
+    first_action = ops[0]
+    second_action = ops[2]
+    assert first_action == {"index": {"_index": "alerts", "_id": "uuid-abc"}}
+    assert second_action == {"index": {"_index": "alerts", "_id": "uuid-xyz"}}

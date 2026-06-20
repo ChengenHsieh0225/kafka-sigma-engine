@@ -26,7 +26,7 @@ class _ESIndexer:
         """Send *docs* to Elasticsearch via the _bulk API."""
         ops: list[Any] = []
         for doc in docs:
-            ops.append({"index": {"_index": index}})
+            ops.append({"index": {"_index": index, "_id": doc["alert_id"]}})
             ops.append(doc)
         response = await self._client.bulk(operations=ops)
         if response.get("errors"):
