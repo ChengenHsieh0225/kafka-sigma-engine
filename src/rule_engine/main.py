@@ -18,10 +18,8 @@ from typing import Any
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
-from src.exceptions import RuleEngineError
-from src.models import SigmaRule
-from src.rule_engine.evaluator import evaluate
 from src.rule_engine.loader import load_rules
+from src.rule_engine.service import RuleEngineService
 
 _LOGS_PROCESSED: Counter = Counter(
     "logs_processed_total",
@@ -60,7 +58,7 @@ async def _poll_consumer_lag(consumer: AIOKafkaConsumer) -> None:
 async def _consume_rule_updates(
     bootstrap: str,
     worker_id: str,
-    rules: list[SigmaRule],
+    service: RuleEngineService,
 ) -> None:
     """Fan-out consumer: hot-reload new Sigma Rules published to ``rule-updates``.
 
@@ -71,7 +69,7 @@ async def _consume_rule_updates(
     Args:
         bootstrap: Kafka bootstrap servers string.
         worker_id: Unique identifier for this worker process.
-        rules: Shared in-memory rule list; new rules are appended.
+        service: Active RuleEngineService; new rules are appended via hot_reload().
 
     Raises:
         RuleEngineError: If a published rule payload is missing a required field.
@@ -87,18 +85,7 @@ async def _consume_rule_updates(
     try:
         async for msg in consumer:
             data: dict[str, Any] = json.loads(msg.value)
-            try:
-                rule = SigmaRule(
-                    id=data["id"],
-                    title=data["title"],
-                    level=data["level"],
-                    detection=data["detection"],
-                )
-            except KeyError as exc:
-                raise RuleEngineError(
-                    f"Hot-reloaded rule payload is missing required field: {exc}"
-                ) from exc
-            rules.append(rule)
+            service.hot_reload(data)
     finally:
         await consumer.stop()
 
@@ -119,7 +106,7 @@ async def main() -> None:
 
     start_http_server(metrics_port)
 
-    rules: list[SigmaRule] = load_rules(rules_dir)
+    service = RuleEngineService(load_rules(rules_dir))
 
     producer: AIOKafkaProducer = AIOKafkaProducer(bootstrap_servers=bootstrap)
     await producer.start()
@@ -134,7 +121,7 @@ async def main() -> None:
     await consumer.start()
 
     updates_task = asyncio.create_task(
-        _consume_rule_updates(bootstrap, worker_id, rules)
+        _consume_rule_updates(bootstrap, worker_id, service)
     )
     lag_task = asyncio.create_task(_poll_consumer_lag(consumer))
 
@@ -143,7 +130,7 @@ async def main() -> None:
             raw_log: dict[str, Any] = json.loads(msg.value)
 
             with _EVAL_DURATION.time():
-                alerts = evaluate(raw_log, rules)
+                alerts = service.evaluate_log(raw_log)
 
             for alert in alerts:
                 payload = json.dumps(alert.to_dict()).encode()

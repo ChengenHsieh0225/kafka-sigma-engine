@@ -7,7 +7,7 @@ import os
 from typing import Any
 
 from aiokafka import AIOKafkaConsumer
-from elasticsearch import AsyncElasticsearch
+from elasticsearch import AsyncElasticsearch, BadRequestError
 
 from src.alert_storage.service import AlertStorageService
 from src.exceptions import AlertStorageError
@@ -36,23 +36,26 @@ class _ESIndexer:
 async def _ensure_index(client: AsyncElasticsearch, index: str) -> None:
     """Create the Elasticsearch index with explicit keyword mappings if it does not exist.
 
-    Uses ignore=400 to handle the TOCTOU race when multiple instances start concurrently.
+    Catches BadRequestError (HTTP 400) to handle the TOCTOU race when multiple
+    instances start concurrently and the index is already created.
     """
-    await client.indices.create(
-        index=index,
-        mappings={
-            "properties": {
-                "alert_id": {"type": "keyword"},
-                "rule_id": {"type": "keyword"},
-                "rule_title": {"type": "text"},
-                "severity": {"type": "keyword"},
-                "matched_at": {"type": "date"},
-                "host": {"type": "keyword"},
-                "raw_log": {"type": "object", "dynamic": True},
-            }
-        },
-        ignore=400,
-    )
+    try:
+        await client.indices.create(
+            index=index,
+            mappings={
+                "properties": {
+                    "alert_id": {"type": "keyword"},
+                    "rule_id": {"type": "keyword"},
+                    "rule_title": {"type": "text"},
+                    "severity": {"type": "keyword"},
+                    "matched_at": {"type": "date"},
+                    "host": {"type": "keyword"},
+                    "raw_log": {"type": "object", "dynamic": True},
+                }
+            },
+        )
+    except BadRequestError:
+        pass  # index already exists — concurrent startup race
 
 
 async def main() -> None:
