@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: log-generator
+  namespace: kafka-sigma-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: log-generator
+  template:
+    metadata:
+      labels:
+        app: log-generator
+    spec:
+      containers:
+        - name: log-generator
+          image: kafka-sigma-engine/log-generator:latest
+          imagePullPolicy: Never
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: kafka:9092
+            - name: LOG_GENERATOR_EPS
+              value: "1000"
+            - name: LOG_GENERATOR_ADMIN_PORT
+              value: "8080"
+          ports:
+            - containerPort: 8080
+              name: admin
+          resources:
+            requests:
+              cpu: 500m
+              memory: 256Mi

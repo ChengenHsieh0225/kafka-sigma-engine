@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-storage
+  namespace: kafka-sigma-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alert-storage
+  template:
+    metadata:
+      labels:
+        app: alert-storage
+    spec:
+      containers:
+        - name: alert-storage
+          image: kafka-sigma-engine/alert-storage:latest
+          imagePullPolicy: Never
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: kafka:9092
+            - name: ELASTICSEARCH_URL
+              value: http://elasticsearch:9200
+            - name: BATCH_SIZE
+              value: "500"
+            - name: FLUSH_INTERVAL
+              value: "5"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi

@@ -1,0 +1,19 @@
+replicaCount: 1
+
+kraft:
+  enabled: true
+
+provisioning:
+  topics:
+    - name: raw-logs
+      partitions: 8
+      replicationFactor: 1
+    - name: alerts
+      partitions: 1
+      replicationFactor: 1
+    - name: rule-updates
+      partitions: 1
+      replicationFactor: 1
+
+service:
+  type: ClusterIP
