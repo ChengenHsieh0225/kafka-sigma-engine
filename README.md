@@ -127,19 +127,24 @@ Transition probabilities are weighted-random, so hosts cycle through attack phas
 
 ```
 kafka-sigma-engine/
+├── CONTEXT.md                  # Single-context domain doc: data flow, glossary, constraints
 ├── pyproject.toml              # Project metadata, pytest config, mypy config
 ├── requirements.txt            # Pinned runtime dependencies
+│
+├── docs/
+│   ├── adr/                    # Architecture Decision Records (ADR-0001 … ADR-0016)
+│   └── agents/                 # Agent skill docs: issue-tracker, triage-labels, domain
 │
 ├── k8s/                        # Kubernetes manifests (minikube)
 │   ├── namespace.yaml
 │   ├── kafka/
 │   │   ├── kafka.yaml          # Apache Kafka 3.8.1 StatefulSet, Services, topic-provisioning Job
 │   │   └── values.yaml         # Legacy Bitnami Helm chart values (reference only)
-│   ├── elasticsearch/
-│   ├── prometheus/             # Includes kubernetes_sd_configs for Rule Engine pods
-│   ├── grafana/
-│   ├── rule-engine/            # Deployment (replicas: 8) + headless Service
-│   ├── alert-storage/
+│   ├── elasticsearch/          # Deployment + ClusterIP Service
+│   ├── prometheus/             # Deployment, Service, ConfigMap, RBAC for kubernetes_sd_configs
+│   ├── grafana/                # Deployment, Service, ConfigMaps (datasource, dashboard provider, dashboard JSON)
+│   ├── rule-engine/            # Deployment + headless Service
+│   ├── alert-storage/          # Deployment
 │   └── log-generator/         # Deployment + LoadBalancer Service (port 8080)
 │
 ├── services/                   # One Dockerfile per microservice
@@ -177,14 +182,20 @@ kafka-sigma-engine/
 │
 └── tests/
     ├── conftest.py
-    ├── integration/            # Live-stack tests (minikube)
-    │   └── test_pipeline.py
+    ├── integration/
+    │   └── test_pipeline.py    # 11 end-to-end tests against the live minikube stack
     └── unit/
-        ├── test_alert_storage.py
-        ├── test_log_generator.py
-        ├── test_models.py
-        ├── test_rule_engine.py
-        └── test_rule_engine_service.py
+        ├── test_aggregation_rule.py        # SlidingWindow + brute-force rule evaluation
+        ├── test_alert_storage.py           # AlertStorageService: micro-batch + flush logic
+        ├── test_k8s_manifests.py           # Smoke-checks on k8s YAML structure
+        ├── test_log_generator.py           # LogGeneratorService: publish loop + EPS control
+        ├── test_log_generator_admin.py     # LogAdminHandler: GET/POST /rate
+        ├── test_log_generator_state_machine.py  # HostStateMachine state transitions
+        ├── test_models.py                  # SigmaRule, Alert dataclasses
+        ├── test_rule_engine.py             # evaluate(): field equality, modifiers, boolean logic
+        ├── test_rule_engine_service.py     # RuleEngineService: rule lifecycle + evaluate_log()
+        ├── test_sigma_rules.py             # All bundled .yml rules parse and match correctly
+        └── test_window.py                  # SlidingWindow: eviction, threshold, edge cases
 ```
 
 ---
