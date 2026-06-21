@@ -1,13 +1,23 @@
 """Rule Engine service: in-memory Sigma Rule management and log evaluation."""
 
+import datetime
 import logging
-from typing import Any
+import re
+import uuid
+from typing import Any, Callable
 
 from src.exceptions import RuleEngineError
 from src.models import Alert, SigmaRule
-from src.rule_engine.evaluator import evaluate
+from src.rule_engine.evaluator import _match_selection, evaluate
+from src.rule_engine.window import SlidingWindow
 
 logger = logging.getLogger(__name__)
+
+_TIMEFRAME_RE = re.compile(r"^(\d+)([smh])$")
+_TIMEFRAME_UNITS: dict[str, int] = {"s": 1, "m": 60, "h": 3600}
+_AGG_CONDITION_RE = re.compile(
+    r"^(\w+)\s*\|\s*count\(\)\s*by\s*(\w+)\s*>\s*(\d+)$"
+)
 
 
 def _build_rule(payload: dict[str, Any], *, source: str = "rule payload") -> SigmaRule:
@@ -44,13 +54,26 @@ class RuleEngineService:
     the typed JSON envelope format on the rule-updates Kafka topic (ADR-0011).
     Legacy add-only hot_reload() is retained for backward compatibility.
 
+    Time-window aggregation rules (those with a ``timeframe`` key in their
+    detection block) are evaluated using an in-memory sliding window per host
+    per rule (ADR-0010). The window state is keyed by rule_id and host.
+
     Args:
         rules: Initial Sigma Rules loaded at startup.  Copied internally so the
                caller's list is not mutated.
+        clock: Clock function for the sliding windows. Defaults to
+               ``time.monotonic``. Inject a controlled clock in tests.
     """
 
-    def __init__(self, rules: list[SigmaRule] | None = None) -> None:
+    def __init__(
+        self,
+        rules: list[SigmaRule] | None = None,
+        *,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
         self._rules: list[SigmaRule] = list(rules) if rules else []
+        self._clock = clock
+        self._windows: dict[str, SlidingWindow] = {}
 
     @property
     def rule_count(self) -> int:
@@ -147,9 +170,68 @@ class RuleEngineService:
 
         if op == "delete":
             self._rules = [r for r in self._rules if r.id != rule_id]
+            self._windows.pop(rule_id, None)
             return None
 
         raise RuleEngineError(f"Unrecognised rule update op: {op!r}")
+
+    def _get_window(self, rule_id: str) -> SlidingWindow:
+        if rule_id not in self._windows:
+            self._windows[rule_id] = SlidingWindow(now=self._clock)
+        return self._windows[rule_id]
+
+    def _evaluate_aggregation(self, rule: SigmaRule, raw_log: dict[str, Any]) -> Alert | None:
+        """Evaluate one aggregation rule against raw_log using the sliding window.
+
+        Returns an Alert if the selection matches and the per-host event count
+        within the timeframe exceeds the rule's threshold; None otherwise.
+
+        Raises:
+            RuleEngineError: If the condition or timeframe cannot be parsed.
+        """
+        condition = str(rule.detection.get("condition", ""))
+        timeframe_str = str(rule.detection.get("timeframe", ""))
+
+        m = _AGG_CONDITION_RE.match(condition.strip())
+        if not m:
+            raise RuleEngineError(
+                f"Rule {rule.id!r}: unsupported aggregation condition {condition!r}; "
+                "expected 'selection | count() by <field> > <N>'"
+            )
+        selection_name, _group_field, threshold_str = m.group(1), m.group(2), m.group(3)
+        threshold = int(threshold_str)
+
+        tf_m = _TIMEFRAME_RE.match(timeframe_str.strip())
+        if not tf_m:
+            raise RuleEngineError(
+                f"Rule {rule.id!r}: invalid timeframe {timeframe_str!r}; "
+                "expected '<N>s', '<N>m', or '<N>h'"
+            )
+        window_seconds = float(tf_m.group(1)) * _TIMEFRAME_UNITS[tf_m.group(2)]
+
+        groups = {k: v for k, v in rule.detection.items() if k not in ("condition", "timeframe")}
+        if selection_name not in groups:
+            raise RuleEngineError(
+                f"Rule {rule.id!r}: unknown selection group {selection_name!r}"
+            )
+
+        if not _match_selection(raw_log, groups[selection_name]):
+            return None
+
+        host = str(raw_log.get("host", ""))
+        window = self._get_window(rule.id)
+        window.add(host)
+        if window.count(host, window_seconds) > threshold:
+            return Alert(
+                alert_id=str(uuid.uuid4()),
+                rule_id=rule.id,
+                rule_title=rule.title,
+                severity=rule.level,
+                matched_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                host=host,
+                raw_log=raw_log,
+            )
+        return None
 
     def evaluate_log(self, raw_log: dict[str, Any]) -> list[Alert]:
         """Evaluate a Raw Log against all loaded Sigma Rules.
@@ -164,4 +246,16 @@ class RuleEngineService:
             One Alert per matching Sigma Rule.
         """
         rules_snapshot = self._rules
-        return evaluate(raw_log, rules_snapshot)
+        regular: list[SigmaRule] = []
+        alerts: list[Alert] = []
+
+        for rule in rules_snapshot:
+            if "timeframe" in rule.detection:
+                alert = self._evaluate_aggregation(rule, raw_log)
+                if alert is not None:
+                    alerts.append(alert)
+            else:
+                regular.append(rule)
+
+        alerts.extend(evaluate(raw_log, regular))
+        return alerts

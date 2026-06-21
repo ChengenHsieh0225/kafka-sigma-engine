@@ -457,3 +457,35 @@ async def test_cloudtrail_iam_user_create_creates_alert() -> None:
     assert doc["severity"] == "high"
     assert doc["host"] == host
     assert doc["raw_log"]["action"] == "CreateUser"
+
+
+@pytest.mark.integration
+async def test_brute_force_aggregation_rule_creates_alert() -> None:
+    """Publish 6 failed login logs from the same host → brute-force alert in ES.
+
+    Verifies: the sliding-window aggregation rule (win-brute-force-001) fires
+    after the threshold (> 5 events within 60 s from the same host) is exceeded.
+    """
+    host = f"test-host-{uuid.uuid4().hex[:8]}"
+    failed_login = {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "host": host,
+        "log_type": "windows_event",
+        "event_id": "4625",
+        "username": "brute-force-test-user",
+    }
+
+    # Publish 6 failed logins rapidly — exceeds threshold of 5
+    for _ in range(6):
+        await _publish_raw_log(failed_login)
+
+    hits = await _poll_alert("win-brute-force-001", host)
+
+    assert hits, (
+        f"No alert for rule 'win-brute-force-001' on host '{host}' "
+        f"appeared in Elasticsearch within {POLL_TIMEOUT_S}s"
+    )
+    doc = hits[0]["_source"]
+    assert doc["rule_id"] == "win-brute-force-001"
+    assert doc["severity"] == "high"
+    assert doc["host"] == host

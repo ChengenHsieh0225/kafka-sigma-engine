@@ -1,0 +1,13 @@
+title: Windows Brute Force Login Attempt
+id: win-brute-force-001
+status: test
+description: >
+  Detects a brute force attack: more than 5 failed Windows login events
+  (event_id 4625) from the same host within 60 seconds.
+level: high
+detection:
+  selection:
+    log_type: windows_event
+    event_id: '4625'
+  condition: "selection | count() by host > 5"
+  timeframe: 60s

@@ -21,6 +21,24 @@ _CLOUDTRAIL_ACTIONS: list[str] = [
 _USERNAMES: list[str] = ["alice", "bob", "carol", "dave", "svc-backup"]
 _PROCESS_NAMES: list[str] = ["lsass.exe", "cmd.exe", "powershell.exe", "svchost.exe"]
 
+# Suspicious processes emitted by the lateral_moving state
+_SUSPICIOUS_PROCESSES: list[str] = ["cmd.exe", "powershell.exe", "lsass.exe"]
+
+# Valid state names (ADR-0016)
+State = str  # 'idle' | 'brute_forcing' | 'compromised' | 'lateral_moving'
+
+# Transition table: state → [(next_state, weight), ...]
+_TRANSITIONS: dict[str, list[tuple[str, float]]] = {
+    "idle": [("brute_forcing", 0.05), ("idle", 0.95)],
+    "brute_forcing": [("compromised", 0.10), ("idle", 0.05), ("brute_forcing", 0.85)],
+    "compromised": [("lateral_moving", 0.50), ("idle", 0.50)],
+    "lateral_moving": [("idle", 0.30), ("lateral_moving", 0.70)],
+}
+
+
+def _now_iso() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
 
 def generate_raw_log(
     hosts: list[str] | None = None,
@@ -54,7 +72,7 @@ def generate_raw_log(
     log_type = random.choice(log_types)
 
     log: dict[str, Any] = {
-        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "timestamp": _now_iso(),
         "host": host,
         "log_type": log_type,
     }
@@ -72,3 +90,82 @@ def generate_raw_log(
         )
 
     return log
+
+
+class HostStateMachine:
+    """Per-host state machine that emits correlated attack-sequence Raw Logs (ADR-0016).
+
+    Each host transitions between states (idle, brute_forcing, compromised,
+    lateral_moving) with configurable probabilities. The emitted log type is
+    determined by the current state, producing burst patterns that trigger
+    time-window aggregation rules.
+
+    Args:
+        hosts: Initial pool of host names. Additional hosts are auto-registered
+               in the ``idle`` state on first use.
+    """
+
+    def __init__(self, hosts: list[str] | None = None) -> None:
+        self._states: dict[str, State] = {h: "idle" for h in (hosts or [])}
+
+    def state(self, host: str) -> State:
+        """Return the current state for *host* (auto-registers as 'idle')."""
+        return self._states.setdefault(host, "idle")
+
+    def _force_state(self, host: str, state: State) -> None:
+        """Override the state for *host*. Intended for testing only."""
+        self._states[host] = state
+
+    def _transition(self, host: str) -> None:
+        current = self._states.setdefault(host, "idle")
+        options = _TRANSITIONS[current]
+        next_state = random.choices(
+            [s for s, _ in options],
+            weights=[w for _, w in options],
+            k=1,
+        )[0]
+        self._states[host] = next_state
+
+    def emit(self, host: str) -> dict[str, Any]:
+        """Emit one Raw Log for *host* based on its current state, then transition.
+
+        Args:
+            host: Source host identifier.
+
+        Returns:
+            A Raw Log dict matching the schema expected by the Rule Engine.
+        """
+        current = self._states.setdefault(host, "idle")
+
+        if current == "brute_forcing":
+            log: dict[str, Any] = {
+                "timestamp": _now_iso(),
+                "host": host,
+                "log_type": "windows_event",
+                "event_id": 4625,
+                "username": random.choice(_USERNAMES),
+            }
+        elif current == "compromised":
+            event_id = random.choice([4624, 4672])
+            log = {
+                "timestamp": _now_iso(),
+                "host": host,
+                "log_type": "windows_event",
+                "event_id": event_id,
+                "username": random.choice(_USERNAMES),
+            }
+        elif current == "lateral_moving":
+            log = {
+                "timestamp": _now_iso(),
+                "host": host,
+                "log_type": "windows_event",
+                "event_id": 4688,
+                "username": random.choice(_USERNAMES),
+                "process_name": random.choice(_SUSPICIOUS_PROCESSES),
+            }
+        else:
+            # idle → random baseline noise
+            log = generate_raw_log(hosts=[host])
+
+        self._transition(host)
+        return log

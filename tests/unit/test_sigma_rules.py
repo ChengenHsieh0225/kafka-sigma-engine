@@ -254,14 +254,32 @@ def test_cloudtrail_iam_user_create_no_match_for_windows_event() -> None:
 
 
 # ---------------------------------------------------------------------------
-# All 7 rules load from disk (2 existing + 5 new)
+# Rule: Windows Brute Force (aggregation, event_id 4625 > 5 in 60s)
 # ---------------------------------------------------------------------------
 
 
-def test_sigma_rules_directory_contains_seven_rules() -> None:
+def test_windows_brute_force_rule_loads() -> None:
+    rule = _load_rule_by_id("win-brute-force-001")
+    assert rule.level == "high"
+    assert "timeframe" in rule.detection
+    assert rule.detection["timeframe"] == "60s"
+
+
+def test_windows_brute_force_condition_contains_count() -> None:
+    rule = _load_rule_by_id("win-brute-force-001")
+    assert "count()" in rule.detection["condition"]
+    assert "> 5" in rule.detection["condition"]
+
+
+# ---------------------------------------------------------------------------
+# All 8 rules load from disk (7 existing + 1 aggregation)
+# ---------------------------------------------------------------------------
+
+
+def test_sigma_rules_directory_contains_eight_rules() -> None:
     rules = load_rules(SIGMA_RULES_DIR)
-    assert len(rules) == 7, (
-        f"Expected 7 rules (2 existing + 5 new), found {len(rules)}: {[r.id for r in rules]}"
+    assert len(rules) == 8, (
+        f"Expected 8 rules (7 existing + 1 aggregation), found {len(rules)}: {[r.id for r in rules]}"
     )
 
 
