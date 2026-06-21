@@ -358,7 +358,7 @@ minikube tunnel   # Keep running in a separate terminal
 Then open:
 - **Grafana:** `http://$(minikube service grafana -n kafka-sigma-engine --url)`
 - **Prometheus:** `http://$(minikube service prometheus -n kafka-sigma-engine --url)`
-- **minikube dashboard:** `minikube dashboard`
+- **minikube dashboard:** `minikube dashboard` — then switch the namespace dropdown (top-left) from **default** to **kafka-sigma-engine** to see pods
 
 ### 6. Scale the Rule Engine
 
@@ -387,6 +387,12 @@ echo "127.0.0.1 kafka-controller-0.kafka-controller-headless.kafka-sigma-engine.
   | sudo tee -a /etc/hosts
 ```
 
+Scale the Log Generator to 0 before running tests. At 1000 EPS it floods the `raw-logs` partitions — test messages get buried in the backlog and time out:
+
+```bash
+kubectl scale deployment log-generator -n kafka-sigma-engine --replicas=0
+```
+
 Forward Kafka and Elasticsearch to localhost. Skip if already running (check with `lsof -ti tcp:9092`):
 
 ```bash
@@ -399,6 +405,23 @@ Run the suite:
 ```bash
 pytest -m integration tests/integration/
 ```
+
+Restore the Log Generator when done:
+
+```bash
+kubectl scale deployment log-generator -n kafka-sigma-engine --replicas=1
+```
+
+> **If tests still time out** after scaling down the Log Generator, the `rule-engine` consumer group may have stale offsets from a previous run — the backlog can be millions of messages deep. Reset the offsets to skip it (scale to 0 first, wait ~30 s for the group to go inactive, then reset):
+> ```bash
+> kubectl scale deployment rule-engine -n kafka-sigma-engine --replicas=0
+> # wait ~30 s
+> kubectl exec -n kafka-sigma-engine kafka-controller-0 -- \
+>   /opt/kafka/bin/kafka-consumer-groups.sh \
+>     --bootstrap-server localhost:9092 \
+>     --group rule-engine --reset-offsets --to-latest --all-topics --execute
+> kubectl scale deployment rule-engine -n kafka-sigma-engine --replicas=4
+> ```
 
 ---
 
@@ -485,6 +508,12 @@ echo "127.0.0.1 kafka-controller-0.kafka-controller-headless.kafka-sigma-engine.
   | sudo tee -a /etc/hosts
 ```
 
+Scale the Log Generator to 0 replicas before running the suite — its 1000 EPS flood buries test messages in the partition backlog and causes 60 s timeouts:
+
+```bash
+kubectl scale deployment log-generator -n kafka-sigma-engine --replicas=0
+```
+
 Then forward the ports (skip if already running — check with `lsof -ti tcp:9092`):
 
 ```bash
@@ -497,6 +526,14 @@ Run the suite:
 ```bash
 pytest -m integration tests/integration/
 ```
+
+Restore the Log Generator when done:
+
+```bash
+kubectl scale deployment log-generator -n kafka-sigma-engine --replicas=1
+```
+
+> **If tests still time out**, the consumer group has a stale backlog from a previous session. See the [offset-reset note](#8-run-integration-tests-against-minikube) in the Getting Started guide.
 
 Both `KAFKA_BOOTSTRAP` and `ES_URL` can be overridden if the port-forward addresses differ:
 
@@ -544,7 +581,7 @@ In Kubernetes, Prometheus uses `kubernetes_sd_configs` to auto-discover all Rule
 
 ### Prometheus — `http://localhost:9090`
 
-Verify all Rule Engine scrape targets are active:
+Verify all Rule Engine scrape targets are active at **Status → Targets** (the expression browser on the home page shows "No data queried yet" until you enter a PromQL query — that is normal):
 
 ```
 http://localhost:9090/targets

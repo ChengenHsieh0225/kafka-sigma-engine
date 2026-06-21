@@ -34,7 +34,7 @@ from elasticsearch import AsyncElasticsearch
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 ES_URL = os.getenv("ES_URL", "http://localhost:9200")
 ALERT_INDEX = "alerts"
-POLL_TIMEOUT_S = 60
+POLL_TIMEOUT_S = 90
 POLL_INTERVAL_S = 2
 
 

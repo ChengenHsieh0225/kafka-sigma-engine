@@ -127,6 +127,8 @@ async def main() -> None:
         group_id="rule-engine",
         enable_auto_commit=False,
         auto_offset_reset="latest",
+        session_timeout_ms=30000,   # 3× default — prevents CPU-throttle-induced rebalances in minikube
+        heartbeat_interval_ms=5000,
     )
     await consumer.start()
 

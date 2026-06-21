@@ -45,7 +45,7 @@ data:
             {
               "datasource": {"type": "prometheus", "uid": "${datasource}"},
               "expr": "rate(logs_processed_total[1m])",
-              "legendFormat": "EPS — {{worker}}",
+              "legendFormat": "EPS — {{pod}}",
               "refId": "B"
             }
           ],
@@ -105,7 +105,7 @@ data:
             {
               "datasource": {"type": "prometheus", "uid": "${datasource}"},
               "expr": "kafka_consumer_lag",
-              "legendFormat": "Lag — {{worker}}",
+              "legendFormat": "Lag — {{pod}}",
               "refId": "B"
             }
           ],
