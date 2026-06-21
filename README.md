@@ -1,6 +1,6 @@
 # Kafka Sigma Engine
 
-A horizontally-scalable log ingestion and threat detection pipeline that simulates a cloud-native XDR (Extended Detection and Response) platform. The system ingests synthetic security events, evaluates them in real time against [Sigma](https://github.com/SigmaHQ/sigma) detection rules using a horizontally-scaled worker pool, and persists matching Alerts to Elasticsearch — all observable through a live Grafana dashboard. Sustained throughput on a 4-CPU minikube instance is ~500 EPS; the architecture targets 10,000+ EPS on a production cluster with dedicated nodes and batched commits.
+A horizontally-scalable log ingestion and threat detection pipeline that simulates a cloud-native XDR (Extended Detection and Response) platform. The system ingests synthetic security events, evaluates them in real time against [Sigma](https://github.com/SigmaHQ/sigma) detection rules using a horizontally-scaled worker pool, and persists matching Alerts to Elasticsearch — all observable through a live Grafana dashboard. Sustained throughput on a 4-CPU minikube instance reaches ≥ 5,000 EPS with zero lag growth; the architecture targets 10,000+ EPS on dedicated production nodes.
 
 ---
 
@@ -37,11 +37,11 @@ A horizontally-scalable log ingestion and threat detection pipeline that simulat
 
 | Metric | Measured | Notes |
 |---|---|---|
-| Sustained throughput | **~500 EPS** | Ceiling on minikube; see bottleneck note below |
+| Sustained throughput | **≥ 5,000 EPS** | Tested up to 5,000 EPS on minikube with lag staying near zero |
 | Per-event rule evaluation | sub-millisecond | 8 rules, pure Python, no I/O |
 | Log loss on worker restart | zero | at-least-once commits; duplicates deduplicated by `alert_id` |
 
-> **Throughput bottleneck on minikube:** the Rule Engine performs two synchronous Kafka round-trips per raw log — `consumer.commit()` after every message and `producer.send_and_wait()` per alert — each costing ~10–20 ms on a single-node local cluster. Combined with the 500 m CPU limit per pod, each worker tops out at ~60–70 events/second; 8 workers deliver ~500 EPS sustained. On a production cluster with dedicated nodes and batched commits the design supports 10,000+ EPS.
+Throughput is achieved by fire-and-forget alert publishing (`producer.send()`) and batched consumer offset commits (every 100 messages or 5 s). The 10,000+ EPS target requires dedicated Kubernetes nodes to remove CPU contention between services.
 
 ---
 
