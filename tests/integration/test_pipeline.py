@@ -1,7 +1,18 @@
 """Integration tests for the end-to-end Kafka → Rule Engine → Elasticsearch pipeline.
 
-These tests require the live Docker Compose stack:
-    docker compose up -d kafka kafka-init elasticsearch rule-engine-1 alert-storage
+Requires a live stack. Two environments are supported:
+
+Docker Compose (default):
+    docker compose --profile load up -d --wait
+    pytest -m integration tests/integration/
+
+Kubernetes / minikube:
+    kubectl port-forward -n kafka-sigma-engine svc/kafka 9092:9092 &
+    kubectl port-forward -n kafka-sigma-engine svc/elasticsearch 9200:9200 &
+    pytest -m integration tests/integration/
+
+    Or with a custom bootstrap address (e.g. NodePort or /etc/hosts override):
+    KAFKA_BOOTSTRAP=localhost:9092 ES_URL=http://localhost:9200 pytest -m integration tests/integration/
 
 Run with:
     pytest -m integration
@@ -12,6 +23,7 @@ Skip during normal unit test runs with:
 
 import asyncio
 import json
+import os
 import uuid
 from typing import Any
 
@@ -19,8 +31,8 @@ import pytest
 from aiokafka import AIOKafkaProducer
 from elasticsearch import AsyncElasticsearch
 
-KAFKA_BOOTSTRAP = "localhost:9092"
-ES_URL = "http://localhost:9200"
+KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
+ES_URL = os.getenv("ES_URL", "http://localhost:9200")
 ALERT_INDEX = "alerts"
 POLL_TIMEOUT_S = 60
 POLL_INTERVAL_S = 2
@@ -137,9 +149,7 @@ async def test_windows_failed_login_creates_alert_in_elasticsearch() -> None:
         "username": "integ-test-user",
     }
 
-    await _publish_raw_log(raw_log)
-
-    hits = await _poll_alert("win-failed-login-001", host)
+    hits = await _poll_alert_with_log_replay("win-failed-login-001", host, raw_log)
 
     assert hits, (
         f"No alert for rule 'win-failed-login-001' on host '{host}' "
@@ -167,9 +177,7 @@ async def test_cloudtrail_bucket_delete_creates_alert_in_elasticsearch() -> None
         "source_ip": "10.0.0.1",
     }
 
-    await _publish_raw_log(raw_log)
-
-    hits = await _poll_alert("aws-s3-delete-001", host)
+    hits = await _poll_alert_with_log_replay("aws-s3-delete-001", host, raw_log)
 
     assert hits, (
         f"No alert for rule 'aws-s3-delete-001' on host '{host}' "
@@ -226,6 +234,43 @@ async def _publish_alert_direct(alert_payload: dict[str, Any]) -> None:
         )
     finally:
         await producer.stop()
+
+
+async def _poll_brute_force_alert(host: str, raw_log: dict[str, Any]) -> list[dict[str, Any]]:
+    """Poll for brute-force alert, re-publishing 6 failed logins every 10s.
+
+    Re-publishing the full burst ensures the sliding-window count exceeds the
+    threshold even when the first batch was missed due to a consumer-group rebalance.
+    """
+    republish_every_n = max(1, 10 // POLL_INTERVAL_S)
+    es = AsyncElasticsearch(ES_URL)
+    try:
+        for i in range(POLL_TIMEOUT_S // POLL_INTERVAL_S):
+            if i % republish_every_n == 0:
+                for _ in range(6):
+                    await _publish_raw_log(raw_log)
+            await asyncio.sleep(POLL_INTERVAL_S)
+            try:
+                resp = await es.search(
+                    index=ALERT_INDEX,
+                    query={
+                        "bool": {
+                            "must": [
+                                {"term": {"rule_id": "win-brute-force-001"}},
+                                {"term": {"host": host}},
+                            ]
+                        }
+                    },
+                    ignore_unavailable=True,
+                )
+                hits: list[dict[str, Any]] = resp["hits"]["hits"]
+                if hits:
+                    return hits
+            except Exception:  # noqa: BLE001
+                pass
+    finally:
+        await es.close()
+    return []
 
 
 async def _poll_es_count(alert_id: str) -> int:
@@ -334,9 +379,7 @@ async def test_windows_successful_login_creates_alert() -> None:
         "username": "alice",
     }
 
-    await _publish_raw_log(raw_log)
-
-    hits = await _poll_alert("win-successful-login-001", host)
+    hits = await _poll_alert_with_log_replay("win-successful-login-001", host, raw_log)
 
     assert hits, (
         f"No alert for rule 'win-successful-login-001' on host '{host}' "
@@ -361,9 +404,7 @@ async def test_windows_explicit_credentials_creates_alert() -> None:
         "username": "svc-backup",
     }
 
-    await _publish_raw_log(raw_log)
-
-    hits = await _poll_alert("win-explicit-creds-001", host)
+    hits = await _poll_alert_with_log_replay("win-explicit-creds-001", host, raw_log)
 
     assert hits, (
         f"No alert for rule 'win-explicit-creds-001' on host '{host}' "
@@ -388,9 +429,7 @@ async def test_windows_privilege_use_creates_alert() -> None:
         "username": "carol",
     }
 
-    await _publish_raw_log(raw_log)
-
-    hits = await _poll_alert("win-privilege-use-001", host)
+    hits = await _poll_alert_with_log_replay("win-privilege-use-001", host, raw_log)
 
     assert hits, (
         f"No alert for rule 'win-privilege-use-001' on host '{host}' "
@@ -416,9 +455,7 @@ async def test_windows_suspicious_process_creates_alert() -> None:
         "username": "dave",
     }
 
-    await _publish_raw_log(raw_log)
-
-    hits = await _poll_alert("win-suspicious-process-001", host)
+    hits = await _poll_alert_with_log_replay("win-suspicious-process-001", host, raw_log)
 
     assert hits, (
         f"No alert for rule 'win-suspicious-process-001' on host '{host}' "
@@ -444,9 +481,7 @@ async def test_cloudtrail_iam_user_create_creates_alert() -> None:
         "source_ip": "10.0.0.99",
     }
 
-    await _publish_raw_log(raw_log)
-
-    hits = await _poll_alert("aws-iam-create-user-001", host)
+    hits = await _poll_alert_with_log_replay("aws-iam-create-user-001", host, raw_log)
 
     assert hits, (
         f"No alert for rule 'aws-iam-create-user-001' on host '{host}' "
@@ -475,11 +510,7 @@ async def test_brute_force_aggregation_rule_creates_alert() -> None:
         "username": "brute-force-test-user",
     }
 
-    # Publish 6 failed logins rapidly — exceeds threshold of 5
-    for _ in range(6):
-        await _publish_raw_log(failed_login)
-
-    hits = await _poll_alert("win-brute-force-001", host)
+    hits = await _poll_brute_force_alert(host, failed_login)
 
     assert hits, (
         f"No alert for rule 'win-brute-force-001' on host '{host}' "

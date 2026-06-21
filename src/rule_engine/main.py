@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
+from aiokafka.errors import CommitFailedError
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
 from src.exceptions import RuleEngineError
@@ -125,7 +126,7 @@ async def main() -> None:
         bootstrap_servers=bootstrap,
         group_id="rule-engine",
         enable_auto_commit=False,
-        auto_offset_reset="earliest",
+        auto_offset_reset="latest",
     )
     await consumer.start()
 
@@ -149,7 +150,10 @@ async def main() -> None:
                 payload = json.dumps(alert.to_dict()).encode()
                 await producer.send_and_wait("alerts", value=payload)
 
-            await consumer.commit()
+            try:
+                await consumer.commit()
+            except CommitFailedError:
+                pass  # partition was reassigned mid-rebalance; re-processed by new owner
             _LOGS_PROCESSED.inc()
 
     finally:

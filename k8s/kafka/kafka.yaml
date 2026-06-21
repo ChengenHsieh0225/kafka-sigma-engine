@@ -1,0 +1,139 @@
+---
+# Headless service — StatefulSet DNS resolution
+# Pod DNS: kafka-controller-0.kafka-controller-headless.kafka-sigma-engine.svc.cluster.local
+# Matches the /etc/hosts entry for host-side port-forward access.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-controller-headless
+  namespace: kafka-sigma-engine
+spec:
+  selector:
+    app.kubernetes.io/name: kafka
+  ports:
+  - name: client
+    port: 9092
+    targetPort: 9092
+  - name: controller
+    port: 9093
+    targetPort: 9093
+  clusterIP: None
+  publishNotReadyAddresses: true
+---
+# ClusterIP service — internal bootstrap for microservices (kafka:9092)
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: kafka-sigma-engine
+spec:
+  selector:
+    app.kubernetes.io/name: kafka
+  ports:
+  - name: client
+    port: 9092
+    targetPort: 9092
+  type: ClusterIP
+---
+# StatefulSet — apache/kafka:3.8.1 in KRaft combined mode
+# Same image as docker-compose.yml; pod is named kafka-controller-0.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka-controller
+  namespace: kafka-sigma-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kafka
+  serviceName: kafka-controller-headless
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kafka
+        app.kubernetes.io/component: controller
+    spec:
+      containers:
+      - name: kafka
+        image: apache/kafka:3.8.1
+        env:
+        - name: CLUSTER_ID
+          value: "5L6g3nShT-eMCtK--X86sw"
+        - name: KAFKA_NODE_ID
+          value: "1"
+        - name: KAFKA_PROCESS_ROLES
+          value: broker,controller
+        - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+          value: "1@kafka-controller-0.kafka-controller-headless.kafka-sigma-engine.svc.cluster.local:9093"
+        - name: KAFKA_LISTENERS
+          value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+        - name: KAFKA_ADVERTISED_LISTENERS
+          value: "PLAINTEXT://kafka-controller-0.kafka-controller-headless.kafka-sigma-engine.svc.cluster.local:9092"
+        - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+          value: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
+        - name: KAFKA_CONTROLLER_LISTENER_NAMES
+          value: CONTROLLER
+        - name: KAFKA_INTER_BROKER_LISTENER_NAME
+          value: PLAINTEXT
+        - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+          value: "1"
+        - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+          value: "1"
+        - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+          value: "1"
+        - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+          value: "true"
+        - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
+          value: "0"
+        - name: KAFKA_NUM_PARTITIONS
+          value: "8"
+        ports:
+        - name: client
+          containerPort: 9092
+        - name: controller
+          containerPort: 9093
+        readinessProbe:
+          tcpSocket:
+            port: 9092
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          failureThreshold: 12
+---
+# Job — create application topics after Kafka is ready
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-topic-provisioning
+  namespace: kafka-sigma-engine
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: topic-creator
+        image: apache/kafka:3.8.1
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          BOOTSTRAP=kafka:9092
+          echo "Waiting for Kafka to accept connections..."
+          until /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --list > /dev/null 2>&1; do
+            echo "Kafka not ready yet, retrying in 5s..."
+            sleep 5
+          done
+          echo "Kafka ready. Creating topics..."
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" \
+            --create --if-not-exists \
+            --topic raw-logs --partitions 8 --replication-factor 1
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" \
+            --create --if-not-exists \
+            --topic alerts --partitions 1 --replication-factor 1
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" \
+            --create --if-not-exists \
+            --topic rule-updates --partitions 1 --replication-factor 1
+          echo "All topics created."
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --list

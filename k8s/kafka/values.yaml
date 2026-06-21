@@ -1,9 +1,21 @@
-replicaCount: 1
+controller:
+  replicaCount: 1
 
-kraft:
-  enabled: true
+image:
+  registry: docker.io
+  repository: bitnamilegacy/kafka
+  tag: 4.0.0-debian-12-r10
+
+listeners:
+  client:
+    protocol: PLAINTEXT
+  controller:
+    protocol: PLAINTEXT
+  interbroker:
+    protocol: PLAINTEXT
 
 provisioning:
+  enabled: true
   topics:
     - name: raw-logs
       partitions: 8
