@@ -1,0 +1,14 @@
+id: win-suspicious-process-001
+title: Windows Suspicious Process Creation
+level: medium
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    log_type: windows_event
+    event_id: '4688'
+    process_name|contains:
+      - powershell
+      - cmd
+  condition: selection

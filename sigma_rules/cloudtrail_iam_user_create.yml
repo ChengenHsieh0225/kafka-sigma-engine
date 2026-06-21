@@ -1,0 +1,11 @@
+id: aws-iam-create-user-001
+title: CloudTrail IAM User Created
+level: high
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    log_type: cloudtrail
+    action: CreateUser
+  condition: selection

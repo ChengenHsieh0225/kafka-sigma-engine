@@ -320,3 +320,140 @@ async def test_rule_update_add_envelope_creates_alert() -> None:
     assert doc["rule_id"] == rule_id
     assert doc["severity"] == "high"
     assert doc["host"] == host
+
+
+@pytest.mark.integration
+async def test_windows_successful_login_creates_alert() -> None:
+    """Publish a raw log matching win-successful-login-001 → assert alert stored in ES."""
+    host = f"test-host-{uuid.uuid4().hex[:8]}"
+    raw_log = {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "host": host,
+        "log_type": "windows_event",
+        "event_id": "4624",
+        "username": "alice",
+    }
+
+    await _publish_raw_log(raw_log)
+
+    hits = await _poll_alert("win-successful-login-001", host)
+
+    assert hits, (
+        f"No alert for rule 'win-successful-login-001' on host '{host}' "
+        f"appeared in Elasticsearch within {POLL_TIMEOUT_S}s"
+    )
+    doc = hits[0]["_source"]
+    assert doc["rule_id"] == "win-successful-login-001"
+    assert doc["severity"] == "low"
+    assert doc["host"] == host
+    assert doc["raw_log"]["event_id"] == "4624"
+
+
+@pytest.mark.integration
+async def test_windows_explicit_credentials_creates_alert() -> None:
+    """Publish a raw log matching win-explicit-creds-001 → assert alert stored in ES."""
+    host = f"test-host-{uuid.uuid4().hex[:8]}"
+    raw_log = {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "host": host,
+        "log_type": "windows_event",
+        "event_id": "4648",
+        "username": "svc-backup",
+    }
+
+    await _publish_raw_log(raw_log)
+
+    hits = await _poll_alert("win-explicit-creds-001", host)
+
+    assert hits, (
+        f"No alert for rule 'win-explicit-creds-001' on host '{host}' "
+        f"appeared in Elasticsearch within {POLL_TIMEOUT_S}s"
+    )
+    doc = hits[0]["_source"]
+    assert doc["rule_id"] == "win-explicit-creds-001"
+    assert doc["severity"] == "medium"
+    assert doc["host"] == host
+    assert doc["raw_log"]["event_id"] == "4648"
+
+
+@pytest.mark.integration
+async def test_windows_privilege_use_creates_alert() -> None:
+    """Publish a raw log matching win-privilege-use-001 → assert alert stored in ES."""
+    host = f"test-host-{uuid.uuid4().hex[:8]}"
+    raw_log = {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "host": host,
+        "log_type": "windows_event",
+        "event_id": "4672",
+        "username": "carol",
+    }
+
+    await _publish_raw_log(raw_log)
+
+    hits = await _poll_alert("win-privilege-use-001", host)
+
+    assert hits, (
+        f"No alert for rule 'win-privilege-use-001' on host '{host}' "
+        f"appeared in Elasticsearch within {POLL_TIMEOUT_S}s"
+    )
+    doc = hits[0]["_source"]
+    assert doc["rule_id"] == "win-privilege-use-001"
+    assert doc["severity"] == "high"
+    assert doc["host"] == host
+    assert doc["raw_log"]["event_id"] == "4672"
+
+
+@pytest.mark.integration
+async def test_windows_suspicious_process_creates_alert() -> None:
+    """Publish a raw log matching win-suspicious-process-001 → assert alert stored in ES."""
+    host = f"test-host-{uuid.uuid4().hex[:8]}"
+    raw_log = {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "host": host,
+        "log_type": "windows_event",
+        "event_id": "4688",
+        "process_name": "powershell.exe",
+        "username": "dave",
+    }
+
+    await _publish_raw_log(raw_log)
+
+    hits = await _poll_alert("win-suspicious-process-001", host)
+
+    assert hits, (
+        f"No alert for rule 'win-suspicious-process-001' on host '{host}' "
+        f"appeared in Elasticsearch within {POLL_TIMEOUT_S}s"
+    )
+    doc = hits[0]["_source"]
+    assert doc["rule_id"] == "win-suspicious-process-001"
+    assert doc["severity"] == "medium"
+    assert doc["host"] == host
+    assert doc["raw_log"]["event_id"] == "4688"
+    assert doc["raw_log"]["process_name"] == "powershell.exe"
+
+
+@pytest.mark.integration
+async def test_cloudtrail_iam_user_create_creates_alert() -> None:
+    """Publish a raw log matching aws-iam-create-user-001 → assert alert stored in ES."""
+    host = f"test-host-{uuid.uuid4().hex[:8]}"
+    raw_log = {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "host": host,
+        "log_type": "cloudtrail",
+        "action": "CreateUser",
+        "source_ip": "10.0.0.99",
+    }
+
+    await _publish_raw_log(raw_log)
+
+    hits = await _poll_alert("aws-iam-create-user-001", host)
+
+    assert hits, (
+        f"No alert for rule 'aws-iam-create-user-001' on host '{host}' "
+        f"appeared in Elasticsearch within {POLL_TIMEOUT_S}s"
+    )
+    doc = hits[0]["_source"]
+    assert doc["rule_id"] == "aws-iam-create-user-001"
+    assert doc["severity"] == "high"
+    assert doc["host"] == host
+    assert doc["raw_log"]["action"] == "CreateUser"

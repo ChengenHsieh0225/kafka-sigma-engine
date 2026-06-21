@@ -1,0 +1,11 @@
+id: win-privilege-use-001
+title: Windows Special Privileges Assigned to New Logon
+level: high
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    log_type: windows_event
+    event_id: '4672'
+  condition: selection

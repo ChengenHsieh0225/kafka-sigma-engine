@@ -1,0 +1,11 @@
+id: win-successful-login-001
+title: Windows Successful Login
+level: low
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    log_type: windows_event
+    event_id: '4624'
+  condition: selection
