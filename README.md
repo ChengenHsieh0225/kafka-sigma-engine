@@ -135,7 +135,8 @@ kafka-sigma-engine/
 ├── k8s/                        # Kubernetes manifests (minikube)
 │   ├── namespace.yaml
 │   ├── kafka/
-│   │   └── values.yaml         # Bitnami Helm chart values (8 partitions, KRaft)
+│   │   ├── kafka.yaml          # Apache Kafka 3.8.1 StatefulSet, Services, topic-provisioning Job
+│   │   └── values.yaml         # Legacy Bitnami Helm chart values (reference only)
 │   ├── elasticsearch/
 │   ├── prometheus/             # Includes kubernetes_sd_configs for Rule Engine pods
 │   ├── grafana/
@@ -300,7 +301,6 @@ The `k8s/` directory deploys the full stack on minikube with the Rule Engine run
 ### Prerequisites
 
 - [minikube](https://minikube.sigs.k8s.io/docs/start/) with Docker driver
-- [Helm](https://helm.sh/docs/intro/install/) (for the Kafka chart)
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
 
 ### 1. Start minikube
@@ -318,20 +318,23 @@ docker build -t kafka-sigma-engine/alert-storage:latest -f services/alert_storag
 docker build -t kafka-sigma-engine/log-generator:latest -f services/log_generator/Dockerfile .
 ```
 
-### 3. Deploy Kafka via Helm
+### 3. Deploy Kafka
 
 ```bash
-helm repo add bitnami https://charts.bitnami.com/bitnami
-helm install kafka bitnami/kafka \
-  --namespace kafka-sigma-engine \
-  --create-namespace \
-  --values k8s/kafka/values.yaml
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/kafka/kafka.yaml
+```
+
+Wait for Kafka to be ready and for the topic-provisioning Job to complete:
+
+```bash
+kubectl wait --for=condition=ready pod/kafka-controller-0 -n kafka-sigma-engine --timeout=120s
+kubectl wait --for=condition=complete job/kafka-topic-provisioning -n kafka-sigma-engine --timeout=120s
 ```
 
 ### 4. Deploy the rest of the stack
 
 ```bash
-kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/elasticsearch/
 kubectl apply -f k8s/prometheus/
 kubectl apply -f k8s/grafana/
@@ -495,10 +498,10 @@ Run the suite:
 pytest -m integration tests/integration/
 ```
 
-Both `KAFKA_BOOTSTRAP` and `ES_URL` can be overridden via environment variables if you use a different bootstrap address (e.g. NodePort):
+Both `KAFKA_BOOTSTRAP` and `ES_URL` can be overridden if the port-forward addresses differ:
 
 ```bash
-KAFKA_BOOTSTRAP=$(minikube ip):30092 ES_URL=http://localhost:9200 pytest -m integration tests/integration/
+KAFKA_BOOTSTRAP=localhost:9092 ES_URL=http://localhost:9200 pytest -m integration tests/integration/
 ```
 
 The integration suite verifies:
