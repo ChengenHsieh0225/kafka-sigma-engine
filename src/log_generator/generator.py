@@ -9,6 +9,37 @@ from src.exceptions import LogGeneratorError
 
 LOG_TYPES: list[str] = ["windows_event", "cloudtrail"]
 
+# ── Windows event IDs emitted by the idle (baseline noise) state ────────────
+# Only 4624 and 4625 match existing Sigma rules (~20% hit rate).
+# The remaining IDs are common real-world events with no detection rule:
+#   4634 — account logoff (very frequent)
+#   4663 — object access (file / registry)
+#   4776 — NTLM credential validation
+#   4769 — Kerberos service ticket requested
+#   4770 — Kerberos ticket renewed
+# 4648 / 4672 / 4688 are excluded from idle; they are emitted exclusively by
+# the compromised / lateral_moving attack states where they are meaningful.
+_WINDOWS_EVENT_IDS: list[int] = [
+    4634, 4634, 4634,  # logoff — most common baseline event
+    4663, 4663,         # object access
+    4776, 4769, 4770,   # authentication noise
+    4624,               # successful logon → matches login rule (~11%)
+    4625,               # failed logon   → matches failed_login rule (~11%)
+]
+
+# ── CloudTrail actions emitted by the idle state ────────────────────────────
+# Only DeleteBucket and CreateUser match existing Sigma rules (~20% hit rate).
+# The remainder are typical read / describe operations with no detection rule.
+_CLOUDTRAIL_ACTIONS: list[str] = [
+    "GetObject", "GetObject", "GetObject",  # most common S3 read
+    "PutObject", "PutObject",               # common S3 write
+    "DescribeInstances",                     # EC2 recon (no rule)
+    "GetCallerIdentity",                     # STS identity check (no rule)
+    "AssumeRole",                            # common auth flow (no rule)
+    "DeleteBucket",                          # → bucket_delete rule (~10%)
+    "CreateUser",                            # → iam_create_user rule (~10%)
+]
+
 
 def _murmur2(data: bytes) -> int:
     """Kafka-compatible murmur2 hash (matches the Java DefaultPartitioner)."""
@@ -88,9 +119,17 @@ _CLOUDTRAIL_ACTIONS: list[str] = [
     "CreateUser",
 ]
 _USERNAMES: list[str] = ["alice", "bob", "carol", "dave", "svc-backup"]
-_PROCESS_NAMES: list[str] = ["lsass.exe", "cmd.exe", "powershell.exe", "svchost.exe"]
 
-# Suspicious processes emitted by the lateral_moving state
+# Process names for idle windows_event logs.  Mostly benign — cmd.exe /
+# powershell.exe are included but won't trigger the suspicious_process rule
+# because idle no longer emits event_id 4688 (process creation).
+_PROCESS_NAMES: list[str] = [
+    "explorer.exe", "chrome.exe", "svchost.exe", "services.exe",
+    "winlogon.exe", "taskhostw.exe", "lsass.exe",
+    "cmd.exe", "powershell.exe",
+]
+
+# Suspicious processes emitted by the lateral_moving state (always 4688)
 _SUSPICIOUS_PROCESSES: list[str] = ["cmd.exe", "powershell.exe", "lsass.exe"]
 
 # Valid state names (ADR-0016)
