@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import random
 from typing import Any, Protocol
 
 from src.log_generator.generator import HOSTS, LOG_TYPES, HostStateMachine, generate_raw_log
@@ -54,7 +55,6 @@ class LogGeneratorService:
 
     def _next_log(self) -> dict[str, Any]:
         if self._state_machine is not None:
-            import random
             host = random.choice(self._hosts)
             return self._state_machine.emit(host)
         return generate_raw_log(self._hosts, self._log_types)

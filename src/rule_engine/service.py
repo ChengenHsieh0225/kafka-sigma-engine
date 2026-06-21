@@ -198,8 +198,8 @@ class RuleEngineService:
                 f"Rule {rule.id!r}: unsupported aggregation condition {condition!r}; "
                 "expected 'selection | count() by <field> > <N>'"
             )
-        selection_name, _group_field, threshold_str = m.group(1), m.group(2), m.group(3)
-        threshold = int(threshold_str)
+        selection_name = m.group(1)
+        threshold = int(m.group(3))
 
         tf_m = _TIMEFRAME_RE.match(timeframe_str.strip())
         if not tf_m:

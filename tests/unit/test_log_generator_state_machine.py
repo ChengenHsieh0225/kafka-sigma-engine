@@ -4,11 +4,14 @@ Tests verify the observable behavior of HostStateMachine through its
 public interface: the emitted log structure per state.
 """
 
+import json
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from src.log_generator.generator import HostStateMachine, State
+from src.log_generator.service import LogGeneratorService
 
 
 # ---------------------------------------------------------------------------
@@ -102,11 +105,6 @@ def test_valid_states_are_four_named_states() -> None:
 @pytest.mark.asyncio
 async def test_service_uses_state_machine_when_enabled() -> None:
     """LogGeneratorService with use_state_machine=True sends host-keyed logs."""
-    import json
-    from unittest.mock import AsyncMock, MagicMock
-
-    from src.log_generator.service import LogGeneratorService
-
     publisher = MagicMock()
     publisher.send = AsyncMock()
     service = LogGeneratorService(
