@@ -11,12 +11,14 @@ from http.server import HTTPServer
 from aiokafka import AIOKafkaProducer
 
 from src.log_generator.admin import LogAdminHandler
+from src.log_generator.generator import build_balanced_host_pool
 from src.log_generator.service import LogGeneratorService
 
 _DEFAULT_BOOTSTRAP = "kafka:9092"
 _DEFAULT_TOPIC = "raw-logs"
 _DEFAULT_EPS = 1000
 _DEFAULT_ADMIN_PORT = 8080
+_DEFAULT_NUM_HOSTS = 32
 
 
 async def _run_admin_server(service: LogGeneratorService, port: int) -> None:
@@ -33,6 +35,9 @@ async def main() -> None:
     topic = os.environ.get("LOG_GENERATOR_TOPIC", _DEFAULT_TOPIC)
     eps = int(os.environ.get("LOG_GENERATOR_EPS", str(_DEFAULT_EPS)))
     admin_port = int(os.environ.get("LOG_GENERATOR_ADMIN_PORT", str(_DEFAULT_ADMIN_PORT)))
+    num_hosts = int(os.environ.get("NUM_HOSTS", str(_DEFAULT_NUM_HOSTS)))
+
+    hosts = build_balanced_host_pool(num_hosts)
 
     producer: AIOKafkaProducer = AIOKafkaProducer(bootstrap_servers=bootstrap)
     await producer.start()
@@ -40,6 +45,7 @@ async def main() -> None:
         service = LogGeneratorService(
             publisher=producer,
             topic=topic,
+            hosts=hosts,
             use_state_machine=True,
         )
         asyncio.create_task(_run_admin_server(service, admin_port))

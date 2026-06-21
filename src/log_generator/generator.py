@@ -7,8 +7,77 @@ from typing import Any
 from src.exceptions import LogGeneratorError
 
 
-HOSTS: list[str] = ["web-01", "web-02", "db-01", "db-02", "auth-01"]
 LOG_TYPES: list[str] = ["windows_event", "cloudtrail"]
+
+
+def _murmur2(data: bytes) -> int:
+    """Kafka-compatible murmur2 hash (matches the Java DefaultPartitioner)."""
+    m = 0x5BD1E995
+    h = (0x9747B28C ^ len(data)) & 0xFFFFFFFF
+    i = 0
+    remaining = len(data)
+    while remaining >= 4:
+        k = (
+            (data[i] & 0xFF)
+            | ((data[i + 1] & 0xFF) << 8)
+            | ((data[i + 2] & 0xFF) << 16)
+            | ((data[i + 3] & 0xFF) << 24)
+        )
+        k = (k * m) & 0xFFFFFFFF
+        k ^= k >> 24
+        k = (k * m) & 0xFFFFFFFF
+        h = (h * m) & 0xFFFFFFFF
+        h ^= k
+        i += 4
+        remaining -= 4
+    base = i
+    if remaining >= 3:
+        h ^= (data[base + 2] & 0xFF) << 16
+    if remaining >= 2:
+        h ^= (data[base + 1] & 0xFF) << 8
+    if remaining >= 1:
+        h ^= data[base] & 0xFF
+        h = (h * m) & 0xFFFFFFFF
+    h ^= h >> 13
+    h = (h * m) & 0xFFFFFFFF
+    h ^= h >> 15
+    return h & 0xFFFFFFFF
+
+
+def _kafka_partition(key: str, num_partitions: int) -> int:
+    """Return the Kafka partition a key would be routed to."""
+    return (_murmur2(key.encode()) & 0x7FFFFFFF) % num_partitions
+
+
+def build_balanced_host_pool(total: int = 32, num_partitions: int = 8) -> list[str]:
+    """Return a list of host names spread evenly across Kafka partitions.
+
+    Generates candidates ``host-000``, ``host-001``, … until every partition
+    has at least ``total // num_partitions`` hosts.  The returned list is
+    interleaved by partition so ``random.choice`` doesn't cluster on one shard.
+    """
+    target_per_partition = max(1, total // num_partitions)
+    buckets: dict[int, list[str]] = {p: [] for p in range(num_partitions)}
+    n = 0
+    while True:
+        name = f"host-{n:03d}"
+        p = _kafka_partition(name, num_partitions)
+        buckets[p].append(name)
+        n += 1
+        if all(len(buckets[p]) >= target_per_partition for p in range(num_partitions)):
+            break
+    # Interleave so the list isn't sorted by partition
+    result: list[str] = []
+    i = 0
+    while any(i < len(buckets[p]) for p in range(num_partitions)):
+        for p in range(num_partitions):
+            if i < len(buckets[p]):
+                result.append(buckets[p][i])
+        i += 1
+    return result
+
+
+HOSTS: list[str] = build_balanced_host_pool()
 
 _WINDOWS_EVENT_IDS: list[int] = [4624, 4625, 4648, 4672, 4688]
 _CLOUDTRAIL_ACTIONS: list[str] = [
