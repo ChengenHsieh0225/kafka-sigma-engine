@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -113,6 +114,8 @@ async def main() -> None:
     rules_dir = Path(os.environ.get("SIGMA_RULES_DIR", "sigma_rules"))
     metrics_port = int(os.environ.get("METRICS_PORT", "8001"))
     worker_id = os.environ.get("WORKER_ID", str(uuid.uuid4()))
+    commit_every_n = int(os.environ.get("COMMIT_EVERY_N", "100"))
+    commit_every_s = float(os.environ.get("COMMIT_EVERY_S", "5.0"))
 
     start_http_server(metrics_port)
 
@@ -137,6 +140,9 @@ async def main() -> None:
     )
     lag_task = asyncio.create_task(_poll_consumer_lag(consumer))
 
+    msgs_since_commit: int = 0
+    last_commit_t: float = time.monotonic()
+
     try:
         async for msg in consumer:
             try:
@@ -150,18 +156,28 @@ async def main() -> None:
 
             for alert in alerts:
                 payload = json.dumps(alert.to_dict()).encode()
-                await producer.send_and_wait("alerts", value=payload)
+                await producer.send("alerts", value=payload)  # fire-and-forget; broker ACK not awaited
 
-            try:
-                await consumer.commit()
-            except CommitFailedError:
-                pass  # partition was reassigned mid-rebalance; re-processed by new owner
+            msgs_since_commit += 1
+            now = time.monotonic()
+            if msgs_since_commit >= commit_every_n or (now - last_commit_t) >= commit_every_s:
+                try:
+                    await consumer.commit()
+                    msgs_since_commit = 0
+                    last_commit_t = now
+                except CommitFailedError:
+                    pass  # partition reassigned mid-rebalance; re-processed by new owner
             _LOGS_PROCESSED.inc()
 
     finally:
         updates_task.cancel()
         lag_task.cancel()
         await asyncio.gather(updates_task, lag_task, return_exceptions=True)
+        await producer.flush()  # drain buffered alert sends before shutdown
+        try:
+            await consumer.commit()  # commit any messages not yet committed
+        except CommitFailedError:
+            pass
         await consumer.stop()
         await producer.stop()
 

@@ -399,6 +399,8 @@ The Log Generator always uses the per-host state machine. Initial EPS is set by 
 | `SIGMA_RULES_DIR` | `sigma_rules` | Directory scanned for `*.yml` Sigma Rules on startup |
 | `METRICS_PORT` | `8001` | Port for the Prometheus `/metrics` HTTP endpoint |
 | `WORKER_ID` | *(random UUID)* | Unique identifier; used to derive a unique `rule-updates` consumer group ID |
+| `COMMIT_EVERY_N` | `100` | Commit consumer offsets after this many messages (whichever threshold is reached first) |
+| `COMMIT_EVERY_S` | `5.0` | Commit consumer offsets after this many seconds since the last commit |
 
 ### Alert Storage Service
 
