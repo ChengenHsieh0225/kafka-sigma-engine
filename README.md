@@ -257,9 +257,13 @@ kubectl get pods -n kafka-sigma-engine --watch
 minikube tunnel   # Keep running in a separate terminal
 ```
 
-Then open:
-- **Grafana:** `http://$(minikube service grafana -n kafka-sigma-engine --url)`
-- **Prometheus:** `http://$(minikube service prometheus -n kafka-sigma-engine --url)`
+Get each service URL and open it in your browser:
+
+```bash
+minikube service grafana -n kafka-sigma-engine --url      # Grafana
+minikube service prometheus -n kafka-sigma-engine --url   # Prometheus
+```
+
 - **minikube dashboard:** `minikube dashboard` — then switch the namespace dropdown (top-left) from **default** to **kafka-sigma-engine** to see pods
 
 ### 7. Scale the Rule Engine
@@ -491,10 +495,10 @@ Services are accessed via `minikube service` (Grafana, Prometheus) or `kubectl p
 ### Grafana
 
 ```bash
-open http://$(minikube service grafana -n kafka-sigma-engine --url)
+minikube service grafana -n kafka-sigma-engine --url
 ```
 
-The dashboard is provisioned automatically on startup (no login required). Navigate to **Dashboards → Kafka Sigma Engine**.
+Copy the printed URL into your browser. The dashboard is provisioned automatically on startup (no login required). Navigate to **Dashboards → Kafka Sigma Engine**.
 
 | Panel | Metric | What it shows |
 |---|---|---|
@@ -507,10 +511,10 @@ Prometheus uses `kubernetes_sd_configs` to auto-discover all Rule Engine pods �
 ### Prometheus
 
 ```bash
-open http://$(minikube service prometheus -n kafka-sigma-engine --url)
+minikube service prometheus -n kafka-sigma-engine --url
 ```
 
-Verify all Rule Engine scrape targets are active at **Status → Targets** (the expression browser on the home page shows "No data queried yet" until you enter a PromQL query — that is normal).
+Copy the printed URL into your browser. Verify all Rule Engine scrape targets are active at **Status → Targets** (the expression browser on the home page shows "No data queried yet" until you enter a PromQL query — that is normal).
 
 ### Elasticsearch
 
