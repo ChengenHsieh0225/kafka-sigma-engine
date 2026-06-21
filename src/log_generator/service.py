@@ -52,12 +52,27 @@ class LogGeneratorService:
         self._hosts = hosts if hosts is not None else HOSTS
         self._log_types = log_types if log_types is not None else LOG_TYPES
         self._state_machine = HostStateMachine(self._hosts) if use_state_machine else None
+        self._eps: int = 0
 
     def _next_log(self) -> dict[str, Any]:
         if self._state_machine is not None:
             host = random.choice(self._hosts)
             return self._state_machine.emit(host)
         return generate_raw_log(self._hosts, self._log_types)
+
+    def get_eps(self) -> int:
+        """Return the current target events-per-second rate."""
+        return self._eps
+
+    def set_eps(self, eps: int) -> None:
+        """Update the target events-per-second rate.
+
+        Takes effect on the next iteration of :meth:`run`.
+
+        Args:
+            eps: New target rate. Must be ≥ 1.
+        """
+        self._eps = eps
 
     async def send_one(self) -> None:
         """Generate and publish a single Raw Log.
@@ -73,11 +88,13 @@ class LogGeneratorService:
     async def run(self, eps: int) -> None:
         """Continuously publish Raw Logs at the target rate.
 
+        The rate can be changed at runtime via :meth:`set_eps`; the new value
+        takes effect on the next loop iteration.
+
         Args:
-            eps: Target events per second. Controls the inter-message sleep
-                 interval (``1 / eps`` seconds).
+            eps: Initial target events per second.
         """
-        interval = 1.0 / eps
+        self._eps = eps
         while True:
             await self.send_one()
-            await asyncio.sleep(interval)
+            await asyncio.sleep(1.0 / self._eps)
