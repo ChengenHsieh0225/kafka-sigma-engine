@@ -16,17 +16,6 @@ from src.rule_engine.loader import load_rules
 SIGMA_RULES_DIR = Path(__file__).parent.parent.parent / "sigma_rules"
 
 
-def _load_rule(filename: str) -> SigmaRule:
-    rules = load_rules(SIGMA_RULES_DIR)
-    matching = [r for r in rules if r.id in filename or filename in r.id]
-    # Fall back to looking by filename stem against rule id
-    for r in rules:
-        stem = filename.replace(".yml", "")
-        if r.id == stem or stem in r.id:
-            return r
-    raise AssertionError(f"Rule not found for filename '{filename}' in {[r.id for r in rules]}")
-
-
 def _load_rule_by_id(rule_id: str) -> SigmaRule:
     rules = load_rules(SIGMA_RULES_DIR)
     for r in rules:
