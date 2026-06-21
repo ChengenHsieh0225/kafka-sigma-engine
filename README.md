@@ -9,7 +9,6 @@ A high-throughput, low-latency log ingestion and threat detection pipeline that 
 - [Project Overview](#project-overview)
 - [Architecture & Data Flow](#architecture--data-flow)
 - [Project Structure](#project-structure)
-- [Getting Started — Docker Compose](#getting-started--docker-compose)
 - [Getting Started — Kubernetes (minikube)](#getting-started--kubernetes-minikube)
 - [Configuration](#configuration)
 - [Testing Guide](#testing-guide)
@@ -128,7 +127,6 @@ Transition probabilities are weighted-random, so hosts cycle through attack phas
 
 ```
 kafka-sigma-engine/
-├── docker-compose.yml          # Full stack: Kafka, ES, Prometheus, Grafana, services
 ├── pyproject.toml              # Project metadata, pytest config, mypy config
 ├── requirements.txt            # Pinned runtime dependencies
 │
@@ -143,14 +141,6 @@ kafka-sigma-engine/
 │   ├── rule-engine/            # Deployment (replicas: 8) + headless Service
 │   ├── alert-storage/
 │   └── log-generator/         # Deployment + LoadBalancer Service (port 8080)
-│
-├── prometheus/
-│   └── prometheus.yml          # Scrape config for Docker Compose stack
-│
-├── grafana/
-│   ├── dashboards/
-│   │   └── sigma_engine.json   # Pre-built dashboard: EPS, p99 latency, consumer lag
-│   └── provisioning/
 │
 ├── services/                   # One Dockerfile per microservice
 │   ├── alert_storage/
@@ -187,7 +177,7 @@ kafka-sigma-engine/
 │
 └── tests/
     ├── conftest.py
-    ├── integration/            # Live-stack tests (Docker Compose or minikube)
+    ├── integration/            # Live-stack tests (minikube)
     │   └── test_pipeline.py
     └── unit/
         ├── test_alert_storage.py
@@ -199,14 +189,14 @@ kafka-sigma-engine/
 
 ---
 
-## Getting Started — Docker Compose
+## Getting Started — Kubernetes (minikube)
 
-Docker Compose is the fast inner-loop development environment. Use it for rule authoring, local debugging, and running the test suite.
+The `k8s/` directory deploys the full stack on minikube with the Rule Engine running as 8 replicas.
 
 ### Prerequisites
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine + Compose plugin)
-- Python 3.11+ (for running tests locally)
+- [minikube](https://minikube.sigs.k8s.io/docs/start/) with Docker driver
+- [kubectl](https://kubernetes.io/docs/tasks/tools/)
 
 ### 1. Clone the repository
 
@@ -215,101 +205,13 @@ git clone git@github.com:ChengenHsieh0225/kafka-sigma-engine.git
 cd kafka-sigma-engine
 ```
 
-### 2. Spin up the full stack
-
-This starts Kafka (KRaft mode), Elasticsearch, Prometheus, Grafana, four Rule Engine workers, the Alert Storage Service, and the Log Generator. The `--wait` flag blocks until every service with a health check reports healthy.
-
-```bash
-docker compose --profile load up -d --wait
-```
-
-> **Note:** Always pass `--profile load` in every `docker compose` command for this project (including `down`, `logs`, `ps`). Starting the core stack without the profile and adding the Log Generator in a second command causes a Docker network reconnection failure.
-
-Expected healthy services: `kafka`, `elasticsearch`, `prometheus`, `grafana`, `rule-engine-1..4`, `alert-storage`, `log-generator`.
-
-### 3. Verify Kafka topics
-
-```bash
-docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
-  --bootstrap-server localhost:9092 \
-  --list
-# alerts
-# raw-logs
-# rule-updates
-```
-
-### 4. Verify end-to-end flow
-
-```bash
-# Total alert count
-curl -s "http://localhost:9200/alerts/_count" | python3 -m json.tool
-
-# Sample alert document
-curl -s "http://localhost:9200/alerts/_search?size=1" | python3 -m json.tool
-```
-
-### 5. Adjust Log Generator rate at runtime
-
-The Log Generator exposes an HTTP admin endpoint. Change EPS without restarting:
-
-```bash
-# Set rate to 5000 EPS
-curl -s -X POST http://localhost:8080/rate \
-  -H "Content-Type: application/json" \
-  -d '{"eps": 5000}'
-
-# Check current rate
-curl -s http://localhost:8080/rate
-```
-
-### 6. Manage rules at runtime (hot-reload)
-
-Rules can be added, updated, or deleted while the pipeline is running. Publish a typed JSON envelope to the `rule-updates` topic — all workers apply the change without restart.
-
-**Add a new rule:**
-```bash
-echo '{"op":"add","rule_id":"win-rdp-001","rule":{"id":"win-rdp-001","title":"RDP Logon","level":"medium","detection":{"sel":{"log_type":"windows_event","event_id":"4624"},"condition":"sel"}}}' | \
-  docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh \
-    --bootstrap-server localhost:9092 \
-    --topic rule-updates
-```
-
-**Delete a rule:**
-```bash
-echo '{"op":"delete","rule_id":"win-rdp-001"}' | \
-  docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh \
-    --bootstrap-server localhost:9092 \
-    --topic rule-updates
-```
-
-**Update a rule** — publish an `"op":"update"` envelope with the same `rule_id` and the updated rule body.
-
-### 7. Tear down
-
-```bash
-docker compose --profile load down
-```
-
-> If you see a `network not found` error, run `docker compose --profile load down` followed by `docker compose --profile load up -d --wait` to recover.
-
----
-
-## Getting Started — Kubernetes (minikube)
-
-The `k8s/` directory deploys the full stack on minikube with the Rule Engine running as 8 replicas. Use this environment for load testing and scaling demos.
-
-### Prerequisites
-
-- [minikube](https://minikube.sigs.k8s.io/docs/start/) with Docker driver
-- [kubectl](https://kubernetes.io/docs/tasks/tools/)
-
-### 1. Start minikube
+### 2. Start minikube
 
 ```bash
 minikube start --driver=docker --cpus=4 --memory=8g
 ```
 
-### 2. Point Docker to minikube's daemon and build images
+### 3. Point Docker to minikube's daemon and build images
 
 ```bash
 eval $(minikube docker-env)
@@ -318,7 +220,7 @@ docker build -t kafka-sigma-engine/alert-storage:latest -f services/alert_storag
 docker build -t kafka-sigma-engine/log-generator:latest -f services/log_generator/Dockerfile .
 ```
 
-### 3. Deploy Kafka
+### 4. Deploy Kafka
 
 ```bash
 kubectl apply -f k8s/namespace.yaml
@@ -332,7 +234,7 @@ kubectl wait --for=condition=ready pod/kafka-controller-0 -n kafka-sigma-engine 
 kubectl wait --for=condition=complete job/kafka-topic-provisioning -n kafka-sigma-engine --timeout=120s
 ```
 
-### 4. Deploy the rest of the stack
+### 5. Deploy the rest of the stack
 
 ```bash
 kubectl apply -f k8s/elasticsearch/
@@ -349,7 +251,7 @@ Wait for all pods to reach Running:
 kubectl get pods -n kafka-sigma-engine --watch
 ```
 
-### 5. Access dashboards
+### 6. Access dashboards
 
 ```bash
 minikube tunnel   # Keep running in a separate terminal
@@ -360,7 +262,7 @@ Then open:
 - **Prometheus:** `http://$(minikube service prometheus -n kafka-sigma-engine --url)`
 - **minikube dashboard:** `minikube dashboard` — then switch the namespace dropdown (top-left) from **default** to **kafka-sigma-engine** to see pods
 
-### 6. Scale the Rule Engine
+### 7. Scale the Rule Engine
 
 ```bash
 # Scale up to 8 replicas (max — matches 8 partitions)
@@ -370,7 +272,7 @@ kubectl scale deployment rule-engine -n kafka-sigma-engine --replicas=8
 kubectl scale deployment rule-engine -n kafka-sigma-engine --replicas=4
 ```
 
-### 7. Adjust Log Generator rate via K8s
+### 8. Adjust Log Generator rate
 
 ```bash
 LOG_GEN_URL=$(minikube service log-generator -n kafka-sigma-engine --url)
@@ -378,7 +280,33 @@ curl -X POST "$LOG_GEN_URL/rate" -H "Content-Type: application/json" -d '{"eps":
 curl "$LOG_GEN_URL/rate"
 ```
 
-### 8. Run integration tests against minikube
+### 9. Manage rules at runtime (hot-reload)
+
+Rules can be added, updated, or deleted while the pipeline is running. Publish a typed JSON envelope to the `rule-updates` topic — all workers apply the change without restart.
+
+**Add a new rule:**
+```bash
+kubectl exec -n kafka-sigma-engine kafka-controller-0 -- \
+  /opt/kafka/bin/kafka-console-producer.sh \
+    --bootstrap-server localhost:9092 \
+    --topic rule-updates <<'EOF'
+{"op":"add","rule_id":"win-rdp-001","rule":{"id":"win-rdp-001","title":"RDP Logon","level":"medium","detection":{"sel":{"log_type":"windows_event","event_id":"4624"},"condition":"sel"}}}
+EOF
+```
+
+**Delete a rule:**
+```bash
+kubectl exec -n kafka-sigma-engine kafka-controller-0 -- \
+  /opt/kafka/bin/kafka-console-producer.sh \
+    --bootstrap-server localhost:9092 \
+    --topic rule-updates <<'EOF'
+{"op":"delete","rule_id":"win-rdp-001"}
+EOF
+```
+
+**Update a rule** — publish an `"op":"update"` envelope with the same `rule_id` and the updated rule body.
+
+### 10. Run integration tests
 
 Kafka advertises its internal pod hostname in metadata responses. Add it to `/etc/hosts` so it resolves through the port-forward tunnel (one-time setup per machine):
 
@@ -427,7 +355,7 @@ kubectl scale deployment log-generator -n kafka-sigma-engine --replicas=1
 
 ## Configuration
 
-All services are configured through environment variables. The defaults below match `docker-compose.yml`.
+All services are configured through environment variables.
 
 ### Log Generator
 
@@ -470,7 +398,7 @@ pip install -e ".[dev]"
 
 ### Unit tests
 
-Unit tests have no external dependencies and run without Docker or Kubernetes. They cover `evaluate()`, `RuleEngineService` (rule lifecycle + windowed evaluation), `SlidingWindow`, `AlertStorageService` (micro-batch + injected clock), `HostStateMachine`, and `LogAdminHandler`.
+Unit tests have no external dependencies and run without Kubernetes. They cover `evaluate()`, `RuleEngineService` (rule lifecycle + windowed evaluation), `SlidingWindow`, `AlertStorageService` (micro-batch + injected clock), `HostStateMachine`, and `LogAdminHandler`.
 
 ```bash
 pytest tests/unit/
@@ -490,16 +418,7 @@ mypy src/
 
 ### Integration tests
 
-Integration tests run against a live stack and exercise the full Kafka → Rule Engine → Elasticsearch path. They use real Kafka and Elasticsearch connections — no mocking of external clients.
-
-**Against Docker Compose:**
-
-```bash
-docker compose --profile load up -d --wait
-pytest -m integration tests/integration/
-```
-
-**Against minikube:**
+Integration tests run against the live minikube stack and exercise the full Kafka → Rule Engine → Elasticsearch path. They use real Kafka and Elasticsearch connections — no mocking of external clients.
 
 Kafka advertises its internal cluster hostname in metadata responses. Before port-forwarding works end-to-end, add that hostname to your `/etc/hosts` so it resolves back through the tunnel:
 
@@ -508,7 +427,7 @@ echo "127.0.0.1 kafka-controller-0.kafka-controller-headless.kafka-sigma-engine.
   | sudo tee -a /etc/hosts
 ```
 
-Scale the Log Generator to 0 replicas before running the suite — its 1000 EPS flood buries test messages in the partition backlog and causes 60 s timeouts:
+Scale the Log Generator to 0 replicas before running the suite — its 1000 EPS flood buries test messages in the partition backlog and causes timeouts:
 
 ```bash
 kubectl scale deployment log-generator -n kafka-sigma-engine --replicas=0
@@ -533,7 +452,7 @@ Restore the Log Generator when done:
 kubectl scale deployment log-generator -n kafka-sigma-engine --replicas=1
 ```
 
-> **If tests still time out**, the consumer group has a stale backlog from a previous session. See the [offset-reset note](#8-run-integration-tests-against-minikube) in the Getting Started guide.
+> **If tests still time out**, the consumer group has a stale backlog from a previous session. See the [offset-reset note](#10-run-integration-tests) in the Getting Started guide.
 
 Both `KAFKA_BOOTSTRAP` and `ES_URL` can be overridden if the port-forward addresses differ:
 
@@ -557,7 +476,7 @@ The integration suite verifies:
 | `test_cloudtrail_iam_user_create_creates_alert` | CloudTrail CreateUser rule |
 | `test_brute_force_aggregation_rule_creates_alert` | Sliding-window aggregation (>5 events / 60 s) |
 
-To exclude integration tests during local development:
+To exclude integration tests:
 
 ```bash
 pytest -m "not integration" tests/
@@ -567,27 +486,41 @@ pytest -m "not integration" tests/
 
 ## Observability
 
-### Grafana — `http://localhost:3000`
+Services are accessed via `minikube service` (Grafana, Prometheus) or `kubectl port-forward` (Elasticsearch). Run `minikube tunnel` in a separate terminal first so LoadBalancer IPs are assigned.
 
-The Grafana dashboard is provisioned automatically on startup (no login required). Navigate to **Dashboards → Sigma Engine**.
+### Grafana
+
+```bash
+open http://$(minikube service grafana -n kafka-sigma-engine --url)
+```
+
+The dashboard is provisioned automatically on startup (no login required). Navigate to **Dashboards → Kafka Sigma Engine**.
 
 | Panel | Metric | What it shows |
 |---|---|---|
 | **EPS Throughput** | `rate(logs_processed_total[1m])` summed across workers | Real-time events per second processed by the Rule Engine |
 | **p99 Matching Latency** | `histogram_quantile(0.99, rule_evaluation_duration_seconds_bucket)` | 99th-percentile time to evaluate one Raw Log against all loaded rules |
-| **Consumer Lag** | `kafka_consumer_lag` per worker | Backlog of unprocessed messages; spikes indicate the Rule Engine is falling behind the Log Generator |
+| **Consumer Lag** | `kafka_consumer_lag` per pod | Backlog of unprocessed messages; spikes indicate the Rule Engine is falling behind the Log Generator |
 
-In Kubernetes, Prometheus uses `kubernetes_sd_configs` to auto-discover all Rule Engine pods — no static target list is required. All replicas appear automatically as scrape targets.
+Prometheus uses `kubernetes_sd_configs` to auto-discover all Rule Engine pods — all replicas appear as scrape targets without any static configuration.
 
-### Prometheus — `http://localhost:9090`
+### Prometheus
 
-Verify all Rule Engine scrape targets are active at **Status → Targets** (the expression browser on the home page shows "No data queried yet" until you enter a PromQL query — that is normal):
-
-```
-http://localhost:9090/targets
+```bash
+open http://$(minikube service prometheus -n kafka-sigma-engine --url)
 ```
 
-### Elasticsearch — `http://localhost:9200`
+Verify all Rule Engine scrape targets are active at **Status → Targets** (the expression browser on the home page shows "No data queried yet" until you enter a PromQL query — that is normal).
+
+### Elasticsearch
+
+Elasticsearch has a ClusterIP service and is not exposed externally. Access it via port-forward:
+
+```bash
+kubectl port-forward -n kafka-sigma-engine svc/elasticsearch 9200:9200 &
+```
+
+Then query at `http://localhost:9200`:
 
 | Query | Description |
 |---|---|
