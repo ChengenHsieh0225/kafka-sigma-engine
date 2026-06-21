@@ -1,6 +1,6 @@
 # Kafka Sigma Engine
 
-A high-throughput, low-latency log ingestion and threat detection pipeline that simulates a cloud-native XDR (Extended Detection and Response) platform. The system ingests thousands of synthetic security events per second, evaluates them in real time against [Sigma](https://github.com/SigmaHQ/sigma) detection rules using a horizontally-scaled worker pool, and persists matching Alerts to Elasticsearch — all observable through a live Grafana dashboard.
+A horizontally-scalable log ingestion and threat detection pipeline that simulates a cloud-native XDR (Extended Detection and Response) platform. The system ingests synthetic security events, evaluates them in real time against [Sigma](https://github.com/SigmaHQ/sigma) detection rules using a horizontally-scaled worker pool, and persists matching Alerts to Elasticsearch — all observable through a live Grafana dashboard. Sustained throughput on a 4-CPU minikube instance is ~500 EPS; the architecture targets 10,000+ EPS on a production cluster with dedicated nodes and batched commits.
 
 ---
 
@@ -33,7 +33,15 @@ A high-throughput, low-latency log ingestion and threat detection pipeline that 
 | Real-time observability | Prometheus metrics + pre-built Grafana dashboard |
 | Kubernetes deployment | Full stack in `k8s/` targeting minikube; Rule Engine scales to 8 replicas with `kubectl scale` |
 
-**Target metrics:** 10,000+ EPS throughput · sub-millisecond per-event matching latency · zero log loss on worker restart.
+**Measured performance (4-CPU / 8 GB minikube, 8 Rule Engine replicas):**
+
+| Metric | Measured | Notes |
+|---|---|---|
+| Sustained throughput | **~500 EPS** | Ceiling on minikube; see bottleneck note below |
+| Per-event rule evaluation | sub-millisecond | 8 rules, pure Python, no I/O |
+| Log loss on worker restart | zero | at-least-once commits; duplicates deduplicated by `alert_id` |
+
+> **Throughput bottleneck on minikube:** the Rule Engine performs two synchronous Kafka round-trips per raw log — `consumer.commit()` after every message and `producer.send_and_wait()` per alert — each costing ~10–20 ms on a single-node local cluster. Combined with the 500 m CPU limit per pod, each worker tops out at ~60–70 events/second; 8 workers deliver ~500 EPS sustained. On a production cluster with dedicated nodes and batched commits the design supports 10,000+ EPS.
 
 ---
 
