@@ -52,7 +52,6 @@ class RuleEngineService:
 
     Rules can be added, updated, or deleted at runtime without restart via
     the typed JSON envelope format on the rule-updates Kafka topic (ADR-0011).
-    Legacy add-only hot_reload() is retained for backward compatibility.
 
     Time-window aggregation rules (those with a ``timeframe`` key in their
     detection block) are evaluated using an in-memory sliding window per host
@@ -79,22 +78,6 @@ class RuleEngineService:
     def rule_count(self) -> int:
         """Number of Sigma Rules currently loaded."""
         return len(self._rules)
-
-    def hot_reload(self, payload: dict[str, Any]) -> SigmaRule:
-        """Append a new Sigma Rule from a bare rule payload (add-only, PRD US 10).
-
-        Args:
-            payload: Dict with ``id``, ``title``, ``level``, ``detection`` keys.
-
-        Returns:
-            The newly appended SigmaRule.
-
-        Raises:
-            RuleEngineError: If the payload is missing a required field.
-        """
-        rule = _build_rule(payload)
-        self._rules.append(rule)
-        return rule
 
     def apply_rule_update(self, envelope: dict[str, Any]) -> SigmaRule | None:
         """Apply a typed rule lifecycle operation from the rule-updates Kafka topic.
@@ -129,7 +112,9 @@ class RuleEngineService:
             rule_payload = envelope.get("rule")
             if rule_payload is None:
                 raise RuleEngineError("Rule update envelope missing 'rule' field for op='add'")
-            return self.hot_reload(rule_payload)
+            rule = _build_rule(rule_payload)
+            self._rules.append(rule)
+            return rule
 
         try:
             rule_id: str = envelope["rule_id"]

@@ -2,7 +2,6 @@
 
 Tests observable behavior through the public interface:
 - evaluate_log(raw_log) -> list[Alert]
-- hot_reload(payload) -> SigmaRule (add-only per PRD US 10)
 - apply_rule_update(envelope) -> SigmaRule | None (ADR-0011 typed envelope)
 - rule_count property
 """
@@ -104,69 +103,42 @@ def test_evaluate_log_alert_carries_correct_fields() -> None:
 
 
 # ---------------------------------------------------------------------------
-# hot_reload() — add-only behavior (PRD US 10)
+# apply_rule_update() — add: accumulation and isolation behavior
 # ---------------------------------------------------------------------------
 
 
-def test_hot_reload_increases_rule_count() -> None:
-    service = RuleEngineService()
-    service.hot_reload(_make_payload())
-    assert service.rule_count == 1
-
-
-def test_hot_reload_returns_the_new_sigma_rule() -> None:
-    service = RuleEngineService()
-    rule = service.hot_reload(_make_payload(rule_id="aws-001", title="AWS Rule", level="high"))
-    assert isinstance(rule, SigmaRule)
-    assert rule.id == "aws-001"
-    assert rule.title == "AWS Rule"
-    assert rule.level == "high"
-
-
-def test_hot_reloaded_rule_matches_subsequent_evaluations() -> None:
-    """After hot_reload(), evaluate_log() must apply the new rule."""
-    service = RuleEngineService()
-    service.hot_reload(_make_payload(
-        rule_id="aws-001",
-        detection={"sel": {"log_type": "cloudtrail"}, "condition": "sel"},
-    ))
-    alerts = service.evaluate_log({"host": "h", "log_type": "cloudtrail"})
-    assert len(alerts) == 1
-    assert alerts[0].rule_id == "aws-001"
-
-
-def test_hot_reload_is_add_only_existing_rules_still_match() -> None:
-    """Reloading a new rule must not remove or replace existing rules."""
+def test_add_does_not_remove_existing_rules() -> None:
+    """Adding a new rule must not remove or replace existing rules."""
     service = RuleEngineService([_make_rule(rule_id="win-001")])
-    service.hot_reload(_make_payload(rule_id="aws-001"))
+    service.apply_rule_update({"op": "add", "rule": _make_payload(rule_id="aws-001")})
     log: dict[str, Any] = {"host": "h", "log_type": "windows_event", "event_id": "4625"}
     alerts = service.evaluate_log(log)
     assert len(alerts) == 1
     assert alerts[0].rule_id == "win-001"
 
 
-def test_hot_reload_multiple_calls_accumulate_all_rules() -> None:
-    """Each hot_reload() call appends; all rules remain active."""
+def test_multiple_adds_accumulate_all_rules() -> None:
+    """Each add operation appends; all rules remain active."""
     service = RuleEngineService()
-    service.hot_reload(_make_payload(
+    service.apply_rule_update({"op": "add", "rule": _make_payload(
         rule_id="r1",
         detection={"sel": {"log_type": "cloudtrail"}, "condition": "sel"},
-    ))
-    service.hot_reload(_make_payload(
+    )})
+    service.apply_rule_update({"op": "add", "rule": _make_payload(
         rule_id="r2",
         detection={"sel": {"log_type": "windows_event"}, "condition": "sel"},
-    ))
+    )})
     assert service.rule_count == 2
     assert service.evaluate_log({"host": "h", "log_type": "cloudtrail"})[0].rule_id == "r1"
     assert service.evaluate_log({"host": "h", "log_type": "windows_event"})[0].rule_id == "r2"
 
 
 # ---------------------------------------------------------------------------
-# hot_reload() — error handling
+# apply_rule_update() — add: error handling
 # ---------------------------------------------------------------------------
 
 
-def test_hot_reload_missing_id_raises_rule_engine_error() -> None:
+def test_add_missing_rule_id_raises_rule_engine_error() -> None:
     service = RuleEngineService()
     payload: dict[str, Any] = {
         "title": "T",
@@ -174,22 +146,14 @@ def test_hot_reload_missing_id_raises_rule_engine_error() -> None:
         "detection": {"sel": {}, "condition": "sel"},
     }
     with pytest.raises(RuleEngineError):
-        service.hot_reload(payload)
+        service.apply_rule_update({"op": "add", "rule": payload})
 
 
-def test_hot_reload_missing_detection_raises_rule_engine_error() -> None:
+def test_add_missing_detection_raises_rule_engine_error() -> None:
     service = RuleEngineService()
     payload: dict[str, Any] = {"id": "r1", "title": "T", "level": "medium"}
     with pytest.raises(RuleEngineError):
-        service.hot_reload(payload)
-
-
-def test_hot_reload_invalid_payload_does_not_corrupt_rule_set() -> None:
-    """A failed hot_reload must not add a partial rule to the active set."""
-    service = RuleEngineService([_make_rule("win-001")])
-    with pytest.raises(RuleEngineError):
-        service.hot_reload({"title": "Incomplete"})  # missing id, level, detection
-    assert service.rule_count == 1  # unchanged
+        service.apply_rule_update({"op": "add", "rule": payload})
 
 
 # ---------------------------------------------------------------------------
