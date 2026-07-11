@@ -110,14 +110,6 @@ def build_balanced_host_pool(total: int = 32, num_partitions: int = 8) -> list[s
 
 HOSTS: list[str] = build_balanced_host_pool()
 
-_WINDOWS_EVENT_IDS: list[int] = [4624, 4625, 4648, 4672, 4688]
-_CLOUDTRAIL_ACTIONS: list[str] = [
-    "GetObject",
-    "DeleteBucket",
-    "ListBuckets",
-    "PutObject",
-    "CreateUser",
-]
 _USERNAMES: list[str] = ["alice", "bob", "carol", "dave", "svc-backup"]
 
 # Process names for idle windows_event logs.  Mostly benign — cmd.exe /
