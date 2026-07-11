@@ -100,7 +100,7 @@ def build_balanced_host_pool(total: int = 32, num_partitions: int = 8) -> list[s
     # Interleave so the list isn't sorted by partition
     result: list[str] = []
     i = 0
-    while any(i < len(buckets[p]) for p in range(num_partitions)):
+    while all(i < len(buckets[p]) for p in range(num_partitions)):
         for p in range(num_partitions):
             if i < len(buckets[p]):
                 result.append(buckets[p][i])
