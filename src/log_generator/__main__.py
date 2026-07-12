@@ -21,10 +21,8 @@ _DEFAULT_ADMIN_PORT = 8080
 _DEFAULT_NUM_HOSTS = 32
 
 
-async def _run_admin_server(service: LogGeneratorService, port: int) -> None:
+async def _run_admin_server(server: HTTPServer) -> None:
     """Run the HTTP admin server in a thread-pool executor (non-blocking)."""
-    Handler = type("_AdminHandler", (LogAdminHandler,), {"service": service})
-    server = HTTPServer(("", port), Handler)
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, server.serve_forever)
 
@@ -48,8 +46,14 @@ async def main() -> None:
             hosts=hosts,
             use_state_machine=True,
         )
-        asyncio.create_task(_run_admin_server(service, admin_port))
-        await service.run(eps=eps)
+        Handler = type("_AdminHandler", (LogAdminHandler,), {"service": service})
+        admin_server = HTTPServer(("", admin_port), Handler)
+        admin_task = asyncio.create_task(_run_admin_server(admin_server))
+        try:
+            await service.run(eps=eps)
+        finally:
+            admin_server.shutdown()
+            await admin_task
     finally:
         await producer.stop()
 
