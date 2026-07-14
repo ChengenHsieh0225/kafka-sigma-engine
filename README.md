@@ -1,6 +1,6 @@
 # Kafka Sigma Engine
 
-A horizontally-scalable log ingestion and threat detection pipeline that simulates a cloud-native XDR (Extended Detection and Response) platform. The system ingests synthetic security events, evaluates them in real time against [Sigma](https://github.com/SigmaHQ/sigma) detection rules using a horizontally-scaled worker pool, and persists matching Alerts to Elasticsearch — all observable through a live Grafana dashboard. Sustained throughput on a 4-CPU minikube instance reaches ≥ 5,000 EPS with zero lag growth; the architecture targets 10,000+ EPS on dedicated production nodes.
+A horizontally-scalable log ingestion and threat detection pipeline that simulates a cloud-native XDR (Extended Detection and Response) platform. The system ingests synthetic security events, evaluates them in real time against [Sigma](https://github.com/SigmaHQ/sigma) detection rules using a horizontally-scaled worker pool, and persists matching Alerts to Elasticsearch — all observable through a live Grafana dashboard. Sustained throughput on a 4-CPU minikube instance reaches ≥ 10,000 EPS with no lag growth over a sustained 5-minute run; higher rates were not explored on this hardware.
 
 ---
 
@@ -37,11 +37,11 @@ A horizontally-scalable log ingestion and threat detection pipeline that simulat
 
 | Metric | Measured | Notes |
 |---|---|---|
-| Sustained throughput | **≥ 5,000 EPS** | Tested up to 5,000 EPS on minikube with lag staying near zero |
+| Sustained throughput | **≥ 10,000 EPS** | Sustained 5 min each at 7,500 and 10,000 EPS on minikube; consumer lag oscillated in a stable band with no growth trend. Testing was capped at 10,000 EPS by design — the ceiling on this hardware wasn't explored further |
 | Per-event rule evaluation | sub-millisecond | 8 rules, pure Python, no I/O |
 | Log loss on worker restart | zero | at-least-once commits; duplicates deduplicated by `alert_id` |
 
-Throughput is achieved by fire-and-forget alert publishing (`producer.send()`) and batched consumer offset commits (every 100 messages or 5 s). The 10,000+ EPS target requires dedicated Kubernetes nodes to remove CPU contention between services.
+Throughput is achieved by fire-and-forget alert publishing (`producer.send()`) and batched consumer offset commits (every 100 messages or 5 s).
 
 ---
 
