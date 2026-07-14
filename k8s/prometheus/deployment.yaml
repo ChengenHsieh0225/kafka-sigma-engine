@@ -23,10 +23,12 @@ spec:
             - --web.enable-lifecycle
           ports:
             - containerPort: 9090
+          # Mounted as a directory, not subPath: subPath-mounted files are
+          # copied once at pod creation and never see later ConfigMap
+          # updates, which would silently defeat --web.enable-lifecycle.
           volumeMounts:
             - name: prometheus-config
-              mountPath: /etc/prometheus/prometheus.yml
-              subPath: prometheus.yml
+              mountPath: /etc/prometheus
           resources:
             requests:
               cpu: 100m

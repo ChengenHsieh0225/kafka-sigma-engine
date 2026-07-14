@@ -24,6 +24,7 @@ EXPECTED_MANIFESTS = [
     "prometheus/service.yaml",
     "grafana/configmap-datasources.yaml",
     "grafana/configmap-dashboard-provider.yaml",
+    "grafana/configmap-dashboards.yaml",
     "grafana/deployment.yaml",
     "grafana/service.yaml",
     "rule-engine/deployment.yaml",
