@@ -3,18 +3,13 @@ kind: ClusterRole
 metadata:
   name: prometheus
 rules:
+  # Only the "pod" role is used in prometheus-config's kubernetes_sd_configs
+  # (no node/service/endpoints roles, no attach_metadata), so pods is the
+  # only resource actually read.
   - apiGroups: [""]
     resources:
-      - nodes
-      - nodes/proxy
-      - services
-      - endpoints
       - pods
     verbs:
       - get
       - list
       - watch
-  - nonResourceURLs:
-      - /metrics
-    verbs:
-      - get
