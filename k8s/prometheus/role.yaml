@@ -1,11 +1,14 @@
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: prometheus
+  namespace: kafka-sigma-engine
 rules:
   # Only the "pod" role is used in prometheus-config's kubernetes_sd_configs
   # (no node/service/endpoints roles, no attach_metadata), so pods is the
-  # only resource actually read.
+  # only resource actually read. scrape_configs also scopes discovery to
+  # the kafka-sigma-engine namespace only, so a namespaced Role is enough
+  # — no need for cluster-wide pod visibility via ClusterRole.
   - apiGroups: [""]
     resources:
       - pods
