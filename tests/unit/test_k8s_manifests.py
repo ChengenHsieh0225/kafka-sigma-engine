@@ -48,10 +48,10 @@ def test_expected_manifest_exists(rel_path: str) -> None:
     assert (K8S_DIR / rel_path).exists(), f"Missing manifest: {rel_path}"
 
 
-def test_rule_engine_deployment_replicas_equals_8() -> None:
-    """Rule Engine must run 8 replicas to match the 8-partition raw-logs topic (ADR-0012)."""
+def test_rule_engine_deployment_replicas_defaults_to_4() -> None:
+    """Default replicas is 4, not the 8-partition max, for CPU budget reasons (ADR-0017)."""
     manifest = _load("rule-engine/deployment.yaml")
-    assert manifest["spec"]["replicas"] == 8
+    assert manifest["spec"]["replicas"] == 4
 
 
 def test_rule_engine_deployment_is_in_namespace() -> None:

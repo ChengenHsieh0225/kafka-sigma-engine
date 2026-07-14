@@ -13,5 +13,5 @@ minikube (Docker driver) is chosen over kind because:
 ## Consequences
 
 - `k8s/` manifests must build and push images to minikube's internal Docker daemon (`eval $(minikube docker-env)`) or use `minikube image load`.
-- The Rule Engine Deployment `spec.replicas` should be set to 8 (matching the 8-partition `raw-logs` topic from ADR-0012). Scaling below 8 is valid; Kafka redistributes partitions automatically.
+- The Rule Engine Deployment `spec.replicas` should be set to 8 (matching the 8-partition `raw-logs` topic from ADR-0012). Scaling below 8 is valid; Kafka redistributes partitions automatically. (ADR-0017: measured `requests`/`limits` usage showed 8 replicas leaves too little CPU headroom for Kafka on this 4-CPU target, so the shipped default is now 4; 8 is still reachable via `kubectl scale`.)
 - Prometheus must be configured with `kubernetes_sd_configs` targeting the `rule-engine` pod label to auto-discover all replicas without static target lists.

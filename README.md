@@ -31,17 +31,17 @@ A horizontally-scalable log ingestion and threat detection pipeline that simulat
 | Realistic load generation | Per-host state machine produces correlated attack sequences; HTTP admin endpoint for runtime EPS control |
 | Efficient alert storage | Micro-batch flush to Elasticsearch `_bulk` API (size ≥ 500 or elapsed ≥ 5 s) |
 | Real-time observability | Prometheus metrics + pre-built Grafana dashboard |
-| Kubernetes deployment | Full stack in `k8s/` targeting minikube; Rule Engine scales to 8 replicas with `kubectl scale` |
+| Kubernetes deployment | Full stack in `k8s/` targeting minikube; Rule Engine runs 4 replicas by default, scales up to 8 (matching partition count) with `kubectl scale` |
 
-**Measured performance (4-CPU / 8 GB minikube, 8 Rule Engine replicas):**
+**Measured performance (4-CPU / 8 GB minikube, 4 Rule Engine replicas — the default):**
 
 | Metric | Measured | Notes |
 |---|---|---|
-| Sustained throughput | **≥ 10,000 EPS** | Sustained 5 min each at 7,500 and 10,000 EPS on minikube; consumer lag oscillated in a stable band with no growth trend. Testing was capped at 10,000 EPS by design — the ceiling on this hardware wasn't explored further |
+| Sustained throughput | **≥ 10,000 EPS** | Verified at the 4-replica default: 3 min each at 5,000 and 10,000 EPS, consumer lag stable with no growth trend. Also verified at the 8-replica maximum in a longer run (5 min each at 7,500 and 10,000 EPS). Testing was capped at 10,000 EPS by design — the ceiling on this hardware wasn't explored further |
 | Per-event rule evaluation | sub-millisecond | 8 rules, pure Python, no I/O |
 | Log loss on worker restart | zero | at-least-once commits; duplicates deduplicated by `alert_id` |
 
-Throughput is achieved by fire-and-forget alert publishing (`producer.send()`) and batched consumer offset commits (every 100 messages or 5 s).
+Throughput is achieved by fire-and-forget alert publishing (`producer.send()`) and batched consumer offset commits (every 100 messages or 5 s). Kubernetes `requests`/`limits` for every workload are sized against `metrics-server`-measured real usage rather than estimates — see ADR-0017 for the methodology and the resource-budget trade-off behind the 4-replica default.
 
 ---
 
@@ -210,7 +210,7 @@ kafka-sigma-engine/
 
 ## Getting Started — Kubernetes (minikube)
 
-The `k8s/` directory deploys the full stack on minikube with the Rule Engine running as 8 replicas.
+The `k8s/` directory deploys the full stack on minikube with the Rule Engine running as 4 replicas by default (scales up to 8, matching the `raw-logs` partition count — see [Scale the Rule Engine](#7-scale-the-rule-engine)).
 
 ### Prerequisites
 
@@ -287,11 +287,13 @@ minikube service prometheus -n kafka-sigma-engine --url   # Prometheus
 
 ### 7. Scale the Rule Engine
 
+The default is 4 replicas — sized to leave Kafka enough of the node's CPU budget (ADR-0017). Scale up to demonstrate the full horizontal-scaling story:
+
 ```bash
 # Scale up to 8 replicas (max — matches 8 partitions)
 kubectl scale deployment rule-engine -n kafka-sigma-engine --replicas=8
 
-# Scale down — Kafka redistributes partitions automatically
+# Scale back down to the default — Kafka redistributes partitions automatically
 kubectl scale deployment rule-engine -n kafka-sigma-engine --replicas=4
 ```
 
@@ -556,6 +558,17 @@ Then query at `http://localhost:9200`:
 
 The `alert_id`, `severity`, `rule_id`, and `host` fields are indexed as `keyword`, enabling exact-match filtering and bucket aggregations.
 
+### Resource usage (`kubectl top`)
+
+Prometheus and Grafana surface application metrics; neither reports actual container CPU/memory usage. For that, enable the `metrics-server` addon:
+
+```bash
+minikube addons enable metrics-server
+kubectl top pods -n kafka-sigma-engine
+```
+
+This is what every `resources.requests`/`limits` value in `k8s/` is sized against (ADR-0017) — real measured usage under load, not estimates. `kubectl top` only reports a live snapshot (no history), so re-measure after any load-shape change rather than trusting old numbers.
+
 ### Bundled Sigma Rules
 
 Eight rules ship with the repository and are loaded on startup by every Rule Engine worker:
@@ -597,3 +610,4 @@ Full rationale is recorded in `docs/adr/`:
 | `0014` | Alert deduplication via Elasticsearch `_id = alert_id` (vs. query-time collapse or in-memory set) |
 | `0015` | Log Generator HTTP admin endpoint for runtime EPS adjustment (vs. Kafka control topic or signals) |
 | `0016` | Per-host state machine in Log Generator for correlated attack sequences (vs. YAML scenario playbook) |
+| `0017` | Rule Engine default replicas reduced 8 → 4, freeing CPU budget for Kafka on a 4-CPU minikube target (supersedes the `replicas: 8` default in ADR-0012/ADR-0013; 8 remains the max) |

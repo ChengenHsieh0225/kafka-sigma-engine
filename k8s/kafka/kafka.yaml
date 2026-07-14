@@ -99,6 +99,13 @@ spec:
           initialDelaySeconds: 15
           periodSeconds: 5
           failureThreshold: 12
+        resources:
+          requests:
+            cpu: 700m
+            memory: 4096Mi
+          limits:
+            cpu: 1500m
+            memory: 4096Mi
 ---
 # Job — create application topics after Kafka is ready
 apiVersion: batch/v1

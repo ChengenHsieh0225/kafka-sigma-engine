@@ -4,7 +4,7 @@ metadata:
   name: rule-engine
   namespace: kafka-sigma-engine
 spec:
-  replicas: 8
+  replicas: 4
   selector:
     matchLabels:
       app: rule-engine
@@ -34,7 +34,7 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 256Mi
+              memory: 64Mi
             limits:
               cpu: 500m
-              memory: 512Mi
+              memory: 128Mi

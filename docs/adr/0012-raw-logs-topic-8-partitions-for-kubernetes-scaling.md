@@ -7,5 +7,5 @@ The `raw-logs` Kafka topic partition count is increased from 4 (ADR-0005) to 8 t
 ## Consequences
 
 - Adding partitions changes the host → partition hash mapping. Any in-progress in-memory sliding-window state (ADR-0010) held by existing workers is silently reset on repartition. This is acceptable as long as repartitioning occurs before time-window aggregation rules go live.
-- The Rule Engine Kubernetes Deployment should be configured with `replicas: 8` as the maximum. Setting fewer replicas is valid; Kafka will assign multiple partitions to each pod, and host-key affinity is preserved per pod.
+- The Rule Engine Kubernetes Deployment should be configured with `replicas: 8` as the maximum. Setting fewer replicas is valid; Kafka will assign multiple partitions to each pod, and host-key affinity is preserved per pod. (ADR-0017 reduces the *default* to 4 for resource-budget reasons on a 4-CPU minikube target; 8 remains the documented maximum, reachable via `kubectl scale`.)
 - Docker Compose must be updated to create `raw-logs` with 8 partitions.
