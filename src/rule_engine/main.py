@@ -156,11 +156,12 @@ async def main() -> None:
 
             for alert in alerts:
                 payload = json.dumps(alert.to_dict()).encode()
-                await producer.send("alerts", value=payload)  # fire-and-forget; broker ACK not awaited
+                await producer.send("alerts", value=payload)  # buffered; flushed (ACK'd) before consumer.commit()
 
             msgs_since_commit += 1
             now = time.monotonic()
             if msgs_since_commit >= commit_every_n or (now - last_commit_t) >= commit_every_s:
+                await producer.flush()  # ensure alerts are acked before advancing offset
                 try:
                     await consumer.commit()
                     msgs_since_commit = 0
