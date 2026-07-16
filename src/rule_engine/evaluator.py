@@ -1,6 +1,7 @@
 """Sigma Rule evaluator for the Kafka Sigma Engine."""
 
 import datetime
+import json
 import uuid
 from typing import Any
 
@@ -112,6 +113,16 @@ class _ConditionParser:
         return _match_selection(self._raw_log, self._groups[token])
 
 
+def _deterministic_alert_id(rule_id: str, raw_log: dict[str, Any]) -> str:
+    """Return UUID5 derived from rule_id + raw_log content.
+
+    Re-processing the same Kafka message always yields the same alert_id,
+    enabling ES _id deduplication to work correctly after Rule Engine restarts.
+    """
+    key = rule_id + ":" + json.dumps(raw_log, sort_keys=True, default=str)
+    return str(uuid.uuid5(uuid.NAMESPACE_OID, key))
+
+
 def evaluate(raw_log: dict[str, Any], rules: list[SigmaRule]) -> list[Alert]:
     """Evaluate a Raw Log against all Sigma Rules and return matching Alerts.
 
@@ -134,7 +145,7 @@ def evaluate(raw_log: dict[str, Any], rules: list[SigmaRule]) -> list[Alert]:
         if _ConditionParser(tokens, groups, raw_log).parse():
             alerts.append(
                 Alert(
-                    alert_id=str(uuid.uuid4()),
+                    alert_id=_deterministic_alert_id(rule.id, raw_log),
                     rule_id=rule.id,
                     rule_title=rule.title,
                     severity=rule.level,

@@ -55,6 +55,33 @@ def test_evaluate_alert_has_correct_fields() -> None:
     assert alert.alert_id  # non-empty UUID string
 
 
+def test_evaluate_alert_id_is_deterministic() -> None:
+    rule = _make_rule(rule_id="win-001")
+    raw_log: dict[str, Any] = {
+        "host": "web-01",
+        "log_type": "windows_event",
+        "event_id": "4625",
+        "timestamp": "2024-01-01T00:00:00+00:00",
+    }
+    id1 = evaluate(raw_log, [rule])[0].alert_id
+    id2 = evaluate(raw_log, [rule])[0].alert_id
+    assert id1 == id2
+
+
+def test_evaluate_different_logs_produce_different_alert_ids() -> None:
+    rule = _make_rule(rule_id="win-001")
+    log_a: dict[str, Any] = {
+        "host": "web-01",
+        "log_type": "windows_event",
+        "event_id": "4625",
+        "timestamp": "2024-01-01T00:00:00+00:00",
+    }
+    log_b: dict[str, Any] = {**log_a, "host": "web-02"}
+    id_a = evaluate(log_a, [rule])[0].alert_id
+    id_b = evaluate(log_b, [rule])[0].alert_id
+    assert id_a != id_b
+
+
 def test_evaluate_non_matching_log_returns_empty() -> None:
     rule = _make_rule()
     raw_log: dict[str, Any] = {"host": "web-01", "log_type": "cloudtrail", "action": "GetObject"}

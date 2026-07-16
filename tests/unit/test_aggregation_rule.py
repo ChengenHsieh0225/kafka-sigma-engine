@@ -81,6 +81,36 @@ def test_alert_continues_firing_above_threshold() -> None:
     assert len(alerts) == 1
 
 
+def test_aggregation_alert_id_deterministic_across_restarts() -> None:
+    """Re-processing the same log sequence on a fresh service yields the same alert_id."""
+    ts = "2024-01-01T00:00:00+00:00"
+    rule = _agg_rule()
+    log = {**_failed_login(), "timestamp": ts}
+
+    def run_sequence() -> str:
+        svc = RuleEngineService(rules=[rule])
+        result: list = []
+        for _ in range(6):
+            result = svc.evaluate_log(log)
+        return result[0].alert_id
+
+    assert run_sequence() == run_sequence()
+
+
+def test_aggregation_different_hosts_produce_different_alert_ids() -> None:
+    ts = "2024-01-01T00:00:00+00:00"
+    rule = _agg_rule()
+
+    def alert_id_for(host: str) -> str:
+        svc = RuleEngineService(rules=[rule])
+        result: list = []
+        for _ in range(6):
+            result = svc.evaluate_log({**_failed_login(host=host), "timestamp": ts})
+        return result[0].alert_id
+
+    assert alert_id_for("web-01") != alert_id_for("web-02")
+
+
 # ---------------------------------------------------------------------------
 # Non-matching selection
 # ---------------------------------------------------------------------------

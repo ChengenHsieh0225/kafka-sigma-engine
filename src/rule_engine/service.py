@@ -15,6 +15,26 @@ logger = logging.getLogger(__name__)
 
 _TIMEFRAME_RE = re.compile(r"^(\d+)([smh])$")
 _TIMEFRAME_UNITS: dict[str, int] = {"s": 1, "m": 60, "h": 3600}
+
+
+def _deterministic_agg_alert_id(
+    rule_id: str, host: str, raw_log: dict[str, Any], window_seconds: float
+) -> str:
+    """Return UUID5 keyed on (rule, host, time-window bucket).
+
+    Buckets the raw_log's timestamp by window_seconds so that re-processing
+    the same log yields the same alert_id, enabling ES deduplication after
+    Rule Engine restarts.  Falls back to bucket=0 if timestamp is absent or
+    unparseable.
+    """
+    try:
+        dt = datetime.datetime.fromisoformat(str(raw_log.get("timestamp", "")))
+        bucket = int(dt.timestamp() // window_seconds)
+    except (ValueError, TypeError):
+        bucket = 0
+    return str(uuid.uuid5(uuid.NAMESPACE_OID, f"{rule_id}:{host}:{bucket}"))
+
+
 _AGG_CONDITION_RE = re.compile(
     r"^(\w+)\s*\|\s*count\(\)\s*by\s*(\w+)\s*>\s*(\d+)$"
 )
@@ -208,7 +228,7 @@ class RuleEngineService:
         window.add(host)
         if window.count(host, window_seconds) > threshold:
             return Alert(
-                alert_id=str(uuid.uuid4()),
+                alert_id=_deterministic_agg_alert_id(rule.id, host, raw_log, window_seconds),
                 rule_id=rule.id,
                 rule_title=rule.title,
                 severity=rule.level,
