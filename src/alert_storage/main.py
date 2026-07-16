@@ -81,35 +81,36 @@ async def main() -> None:
             "alerts",
             bootstrap_servers=bootstrap,
             group_id="alert-storage",
+            enable_auto_commit=False,
         )
         await consumer.start()
-
-        async def _periodic_flush() -> None:
-            while True:
-                await asyncio.sleep(flush_interval)
-                if service.needs_time_flush():
-                    try:
-                        await service.flush()
-                    except Exception:
-                        logger.exception("Periodic flush failed; will retry next interval")
-
-        flush_task = asyncio.create_task(_periodic_flush())
         try:
-            async for msg in consumer:
-                try:
-                    data: dict[str, Any] = json.loads(msg.value)
-                    alert = Alert(**data)
-                except (json.JSONDecodeError, TypeError):
-                    logger.exception("Skipping malformed alert message: %r", msg.value)
-                    continue
-                await service.process(alert)
+            while True:
+                records = await consumer.getmany(
+                    timeout_ms=int(flush_interval * 1000),
+                    max_records=batch_size,
+                )
+                for tp, msgs in records.items():
+                    for msg in msgs:
+                        try:
+                            data: dict[str, Any] = json.loads(msg.value)
+                            alert = Alert(**data)
+                        except (json.JSONDecodeError, TypeError):
+                            logger.exception("Skipping malformed alert message: %r", msg.value)
+                            continue
+                        await service.process(alert)
+                await service.flush()  # size-triggered (via process) or time-triggered (getmany timeout)
+                if records:
+                    await consumer.commit()  # advance offset only after confirmed ES flush
         finally:
-            flush_task.cancel()
-            await asyncio.gather(flush_task, return_exceptions=True)
             try:
                 await service.flush()
             except Exception:
                 logger.exception("Final flush failed during shutdown")
+            try:
+                await consumer.commit()
+            except Exception:
+                logger.exception("Final commit failed during shutdown")
             await consumer.stop()
     finally:
         await es_client.close()
