@@ -6,7 +6,9 @@ Tests observable behavior:
 - Published value is valid JSON containing required fields
 """
 
+import asyncio
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -119,3 +121,74 @@ async def test_service_send_one_publishes_valid_json() -> None:
     assert "timestamp" in log
     assert "host" in log
     assert "log_type" in log
+
+
+# --- EPS accuracy (time-compensation loop) ---
+
+
+async def test_run_sleep_compensates_for_send_overhead() -> None:
+    """Sleep duration shrinks by exactly the send overhead each iteration."""
+    EPS = 1000
+    SEND_COST = 0.0003  # 0.3 ms per send; target interval = 1.0 ms
+
+    t = [0.0]
+    sleep_calls: list[float] = []
+
+    class CostlyPublisher:
+        async def send(self, topic: str, *, value: bytes | None = None, key: bytes | None = None) -> None:
+            t[0] += SEND_COST
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        t[0] += max(0.0, delay)
+        if len(sleep_calls) >= 5:
+            raise asyncio.CancelledError()
+
+    service = LogGeneratorService(
+        publisher=CostlyPublisher(), topic="raw-logs", hosts=["host-001"]
+    )
+
+    with patch("asyncio.sleep", side_effect=fake_sleep):
+        with pytest.raises(asyncio.CancelledError):
+            await service.run(eps=EPS, _clock=lambda: t[0])
+
+    expected = 1.0 / EPS - SEND_COST  # 0.7 ms
+    for d in sleep_calls:
+        assert abs(d - expected) < 1e-10, f"sleep {d} ≠ expected {expected}"
+
+    # total elapsed time = N / EPS (send cost + sleep = 1/EPS per iteration)
+    assert abs(t[0] - len(sleep_calls) / EPS) < 1e-10
+
+
+async def test_run_skips_sleep_when_behind_schedule() -> None:
+    """When send_one() exceeds 1/eps, sleep is skipped entirely to catch up."""
+    EPS = 1000
+    SEND_COST = 0.002  # 2 ms per send, more than the 1 ms target interval
+    N = 4
+
+    t = [0.0]
+    sleep_calls: list[float] = []
+
+    class SlowPublisher:
+        def __init__(self) -> None:
+            self._count = 0
+
+        async def send(self, topic: str, *, value: bytes | None = None, key: bytes | None = None) -> None:
+            t[0] += SEND_COST
+            self._count += 1
+            if self._count >= N:
+                raise asyncio.CancelledError()
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        t[0] += max(0.0, delay)
+
+    service = LogGeneratorService(
+        publisher=SlowPublisher(), topic="raw-logs", hosts=["host-001"]
+    )
+
+    with patch("asyncio.sleep", side_effect=fake_sleep):
+        with pytest.raises(asyncio.CancelledError):
+            await service.run(eps=EPS, _clock=lambda: t[0])
+
+    assert sleep_calls == [], "sleep should never be called when send_one() is slower than 1/eps"

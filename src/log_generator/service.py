@@ -3,6 +3,7 @@
 import asyncio
 import json
 import random
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from src.log_generator.generator import HOSTS, LOG_TYPES, HostStateMachine, generate_raw_log
@@ -85,16 +86,27 @@ class LogGeneratorService:
         value = json.dumps(log).encode()
         await self._publisher.send(self._topic, value=value, key=key)
 
-    async def run(self, eps: int) -> None:
+    async def run(self, eps: int, *, _clock: Callable[[], float] | None = None) -> None:
         """Continuously publish Raw Logs at the target rate.
+
+        Uses a time-compensation loop: each iteration schedules the next send
+        based on an absolute target timestamp, so timer imprecision and
+        send_one() overhead do not accumulate across iterations.
 
         The rate can be changed at runtime via :meth:`set_eps`; the new value
         takes effect on the next loop iteration.
 
         Args:
             eps: Initial target events per second.
+            _clock: Monotonic clock function; defaults to the running event
+                loop's clock.  Inject a controlled clock in tests.
         """
         self._eps = eps
+        get_time = _clock if _clock is not None else asyncio.get_running_loop().time
+        next_send = get_time()
         while True:
             await self.send_one()
-            await asyncio.sleep(1.0 / self._eps)
+            next_send += 1.0 / self._eps
+            delay = next_send - get_time()
+            if delay > 0:
+                await asyncio.sleep(delay)
